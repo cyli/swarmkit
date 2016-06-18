@@ -6,7 +6,6 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io/ioutil"
-	"math/rand"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -343,24 +342,25 @@ func RenewTLSConfig(ctx context.Context, s *SecurityConfig, baseCertDir string, 
 // calculateRandomExpiry returns a random duration between 50% and 80% of the original
 // duration
 func calculateRandomExpiry(expiresIn time.Duration) time.Duration {
-	if expiresIn.Minutes() < 1 {
-		return time.Second
-	}
+	return 5 * time.Second
+	// if expiresIn.Minutes() < 1 {
+	// 	return time.Second
+	// }
 
-	var randomExpiry int
-	// Our lower bound of renewal will be half of the total expiration time
-	minValidity := int(expiresIn.Minutes() * CertLowerRotationRange)
-	// Our upper bound of renewal will be 80% of the total expiration time
-	maxValidity := int(expiresIn.Minutes() * CertUpperRotationRange)
-	// Let's select a random number of minutes between min and max, and set our retry for that
-	// Using randomly selected rotation allows us to avoid certificate thundering herds.
-	if maxValidity-minValidity < 1 {
-		randomExpiry = minValidity
-	} else {
-		randomExpiry = rand.Intn(maxValidity-minValidity) + int(minValidity)
-	}
+	// var randomExpiry int
+	// // Our lower bound of renewal will be half of the total expiration time
+	// minValidity := int(expiresIn.Minutes() * CertLowerRotationRange)
+	// // Our upper bound of renewal will be 80% of the total expiration time
+	// maxValidity := int(expiresIn.Minutes() * CertUpperRotationRange)
+	// // Let's select a random number of minutes between min and max, and set our retry for that
+	// // Using randomly selected rotation allows us to avoid certificate thundering herds.
+	// if maxValidity-minValidity < 1 {
+	// 	randomExpiry = minValidity
+	// } else {
+	// 	randomExpiry = rand.Intn(maxValidity-minValidity) + int(minValidity)
+	// }
 
-	return time.Duration(randomExpiry) * time.Minute
+	// return time.Duration(randomExpiry) * time.Minute
 }
 
 // LoadTLSCreds loads tls credentials from the specified path and verifies that
