@@ -280,7 +280,7 @@ func FillTemplate(template *x509.Certificate, defaultProfile, profile *config.Si
 	if !profile.NotBefore.IsZero() {
 		notBefore = profile.NotBefore.UTC()
 	} else {
-		notBefore = time.Now().Round(time.Minute).Add(backdate).UTC()
+		notBefore = time.Now().Add(backdate).UTC()
 	}
 
 	if !profile.NotAfter.IsZero() {

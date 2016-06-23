@@ -6,6 +6,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io/ioutil"
+	"math/rand"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -99,9 +100,7 @@ func DefaultPolicy() *cfconfig.Signing {
 // It receives the duration a certificate will be valid for
 func SigningPolicy(certExpiry time.Duration) *cfconfig.Signing {
 	// Force the minimum Certificate expiration to be fifteen minutes
-	if certExpiry < MinNodeCertExpiration {
-		certExpiry = DefaultNodeCertExpiration
-	}
+	// certExpiry = MinNodeCertExpiration
 
 	return &cfconfig.Signing{
 		Default: &cfconfig.SigningProfile{
@@ -264,7 +263,7 @@ func RenewTLSConfig(ctx context.Context, s *SecurityConfig, baseCertDir string, 
 		defer close(updates)
 		for {
 			// Our starting default will be 5 minutes
-			retry = 5 * time.Minute
+			retry = 5 * time.Second
 
 			// Since the expiration of the certificate is managed remotely we should update our
 			// retry timer on every iteration of this loop.
@@ -282,7 +281,7 @@ func RenewTLSConfig(ctx context.Context, s *SecurityConfig, baseCertDir string, 
 					updates <- CertificateUpdate{Err: fmt.Errorf("TLS Certificate is expired")}
 				} else {
 					// Random retry time between 50% and 80% of the total time to expiration
-					retry = calculateRandomExpiry(expiresIn)
+					retry = 5 * time.Second
 				}
 			}
 
@@ -342,25 +341,24 @@ func RenewTLSConfig(ctx context.Context, s *SecurityConfig, baseCertDir string, 
 // calculateRandomExpiry returns a random duration between 50% and 80% of the original
 // duration
 func calculateRandomExpiry(expiresIn time.Duration) time.Duration {
-	return 5 * time.Second
-	// if expiresIn.Minutes() < 1 {
-	// 	return time.Second
-	// }
+	if expiresIn.Minutes() < 1 {
+		return time.Second
+	}
 
-	// var randomExpiry int
-	// // Our lower bound of renewal will be half of the total expiration time
-	// minValidity := int(expiresIn.Minutes() * CertLowerRotationRange)
-	// // Our upper bound of renewal will be 80% of the total expiration time
-	// maxValidity := int(expiresIn.Minutes() * CertUpperRotationRange)
-	// // Let's select a random number of minutes between min and max, and set our retry for that
-	// // Using randomly selected rotation allows us to avoid certificate thundering herds.
-	// if maxValidity-minValidity < 1 {
-	// 	randomExpiry = minValidity
-	// } else {
-	// 	randomExpiry = rand.Intn(maxValidity-minValidity) + int(minValidity)
-	// }
+	var randomExpiry int
+	// Our lower bound of renewal will be half of the total expiration time
+	minValidity := int(expiresIn.Seconds() * CertLowerRotationRange)
+	// Our upper bound of renewal will be 80% of the total expiration time
+	maxValidity := int(expiresIn.Seconds() * CertUpperRotationRange)
+	// Let's select a random number of minutes between min and max, and set our retry for that
+	// Using randomly selected rotation allows us to avoid certificate thundering herds.
+	if maxValidity-minValidity < 1 {
+		randomExpiry = minValidity
+	} else {
+		randomExpiry = rand.Intn(maxValidity-minValidity) + int(minValidity)
+	}
 
-	// return time.Duration(randomExpiry) * time.Minute
+	return time.Duration(randomExpiry) * time.Second
 }
 
 // LoadTLSCreds loads tls credentials from the specified path and verifies that
