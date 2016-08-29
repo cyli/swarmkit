@@ -17,8 +17,13 @@ type Worker interface {
 	// Init prepares the worker for task assignment.
 	Init(ctx context.Context) error
 
-	// Update the set of tasks to the worker.
-	Update(ctx context.Context, added []*api.Task, removed []string, mode api.AssignmentsMessage_AssignmentType) error
+	// Assign a complete set of tasks to a worker. Any task not included in
+	// this set will be removed.
+	Assign(ctx context.Context, tasks []*api.Task) error
+
+	// Update an incremental set of tasks to the worker. Any task not included
+	// either in added or removed will remain untouched.
+	Update(ctx context.Context, added []*api.Task, removed []string) error
 
 	// Listen to updates about tasks controlled by the worker. When first
 	// called, the reporter will receive all updates for all tasks controlled
@@ -93,90 +98,29 @@ func (w *worker) Assign(ctx context.Context, tasks []*api.Task) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	tx, err := w.db.Begin(true)
-	if err != nil {
-		log.G(ctx).WithError(err).Error("failed starting transaction against task database")
-		return err
-	}
-	defer tx.Rollback()
+	log.G(ctx).WithFields(logrus.Fields{
+		"len(tasks)": len(tasks),
+	}).Debug("(*worker).Assign")
 
-	log.G(ctx).WithField("len(tasks)", len(tasks)).Debug("(*worker).Assign")
-	assigned := map[string]struct{}{}
-
-	for _, task := range tasks {
-		log.G(ctx).WithFields(
-			logrus.Fields{
-				"task.id":           task.ID,
-				"task.desiredstate": task.DesiredState}).Debug("assigned")
-		if err := PutTask(tx, task); err != nil {
-			return err
-		}
-
-		if err := SetTaskAssignment(tx, task.ID, true); err != nil {
-			return err
-		}
-
-		if mgr, ok := w.taskManagers[task.ID]; ok {
-			if err := mgr.Update(ctx, task); err != nil && err != ErrClosed {
-				log.G(ctx).WithError(err).Error("failed updating assigned task")
-			}
-		} else {
-			// we may have still seen the task, let's grab the status from
-			// storage and replace it with our status, if we have it.
-			status, err := GetTaskStatus(tx, task.ID)
-			if err != nil {
-				if err != errTaskUnknown {
-					return err
-				}
-
-				// never seen before, register the provided status
-				if err := PutTaskStatus(tx, task.ID, &task.Status); err != nil {
-					return err
-				}
-
-				status = &task.Status
-			} else {
-				task.Status = *status // overwrite the stale manager status with ours.
-			}
-
-			w.startTask(ctx, tx, task)
-		}
-
-		assigned[task.ID] = struct{}{}
-	}
-
-	for id, tm := range w.taskManagers {
-		if _, ok := assigned[id]; ok {
-			continue
-		}
-
-		ctx := log.WithLogger(ctx, log.G(ctx).WithField("task.id", id))
-		if err := SetTaskAssignment(tx, id, false); err != nil {
-			log.G(ctx).WithError(err).Error("error setting task assignment in database")
-			continue
-		}
-
-		delete(w.taskManagers, id)
-
-		go func(tm *taskManager) {
-			// when a task is no longer assigned, we shutdown the task manager for
-			// it and leave cleanup to the sweeper.
-			if err := tm.Close(); err != nil {
-				log.G(ctx).WithError(err).Error("error closing task manager")
-			}
-		}(tm)
-	}
-
-	return tx.Commit()
+	return reconcileTaskState(ctx, w, tasks, nil, true)
 }
 
 // Update the set of tasks to the worker.
 // Tasks in the added set will be added to the worker, and tasks in the removed set
 // will be removed from the worker
-func (w *worker) Update(ctx context.Context, added []*api.Task, removed []string, mode api.AssignmentsMessage_AssignmentType) error {
+func (w *worker) Update(ctx context.Context, added []*api.Task, removed []string) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
+	log.G(ctx).WithFields(logrus.Fields{
+		"len(added)":   len(added),
+		"len(removed)": len(removed),
+	}).Debug("(*worker).Update")
+
+	return reconcileTaskState(ctx, w, added, removed, false)
+}
+
+func reconcileTaskState(ctx context.Context, w *worker, added []*api.Task, removed []string, full_snapshot bool) error {
 	tx, err := w.db.Begin(true)
 	if err != nil {
 		log.G(ctx).WithError(err).Error("failed starting transaction against task database")
@@ -184,11 +128,6 @@ func (w *worker) Update(ctx context.Context, added []*api.Task, removed []string
 	}
 	defer tx.Rollback()
 
-	log.G(ctx).WithFields(logrus.Fields{
-		"len(added)":   len(added),
-		"len(removed)": len(removed),
-		"mode":         mode.String(),
-	}).Debug("(*worker).Update")
 	assigned := map[string]struct{}{}
 
 	for _, task := range added {
@@ -221,12 +160,9 @@ func (w *worker) Update(ctx context.Context, added []*api.Task, removed []string
 				if err := PutTaskStatus(tx, task.ID, &task.Status); err != nil {
 					return err
 				}
-
-				status = &task.Status
 			} else {
-				task.Status = *status // overwrite the stale manager status with ours.
+				task.Status = *status
 			}
-
 			w.startTask(ctx, tx, task)
 		}
 
@@ -251,7 +187,7 @@ func (w *worker) Update(ctx context.Context, added []*api.Task, removed []string
 
 	// If this was a complete set of assignments, we're going to remove all the remaining
 	// tasks.
-	if mode == api.AssignmentsMessage_COMPLETE {
+	if full_snapshot {
 		for id, tm := range w.taskManagers {
 			if _, ok := assigned[id]; ok {
 				continue
@@ -263,11 +199,9 @@ func (w *worker) Update(ctx context.Context, added []*api.Task, removed []string
 				go closeManager(tm)
 			}
 		}
-	}
-
-	// If this was an incremental set of assignments, we're going to remove only the tasks
-	// in the removed set
-	if mode == api.AssignmentsMessage_INCREMENTAL {
+	} else {
+		// If this was an incremental set of assignments, we're going to remove only the tasks
+		// in the removed set
 		for _, taskID := range removed {
 			err := removeTaskAssignment(taskID)
 			if err != nil {
