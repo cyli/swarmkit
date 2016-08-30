@@ -43,8 +43,8 @@ const (
 	// right.
 	maxBatchInterval = 100 * time.Millisecond
 
-	modificationBatchLimit = 200
-	batchingWaitTime       = 50 * time.Millisecond
+	modificationBatchLimit = 100
+	batchingWaitTime       = 100 * time.Millisecond
 )
 
 var (
@@ -915,6 +915,7 @@ func (d *Dispatcher) Assignments(r *api.AssignmentsRequest, stream api.Dispatche
 
 					oneModification()
 				case state.EventDeleteTask:
+
 					if _, exists := tasksMap[v.Task.ID]; !exists {
 						continue
 					}
@@ -924,9 +925,9 @@ func (d *Dispatcher) Assignments(r *api.AssignmentsRequest, stream api.Dispatche
 					delete(tasksMap, v.Task.ID)
 
 					// Release the secrets references from this task
-
 					container := v.Task.Spec.GetContainer()
 					if container == nil {
+						oneModification()
 						continue
 					}
 					for _, secretRef := range container.Secrets {
