@@ -229,7 +229,7 @@ message Secret {
 
 	Meta meta = 2 [(gogoproto.nullable) = false];
 
-	repeated SecretData secret_data = 3;
+	map<string, SecretData> secret_data = 3;
 
 	// Name of the secret
 	string name = 4;
@@ -241,7 +241,7 @@ message SecretData {
 
 	Meta meta = 2 [(gogoproto.nullable) = false];
 
-	SecretSpec  spec = 3  [(gogoproto.nullable) = false];
+	SecretSpec spec = 3  [(gogoproto.nullable) = false];
 
 	// Digest represents the cryptographic digest of the secret data
 	string digest = 4;
