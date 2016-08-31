@@ -18,7 +18,8 @@ func TestWorker(t *testing.T) {
 
 	ctx := context.Background()
 	executor := &mockExecutor{t: t}
-	worker := newWorker(db, executor)
+	secrets := &Secrets{m: make(map[string]*api.Secret)}
+	worker := newWorker(db, executor, secrets)
 	reporter := statusReporterFunc(func(ctx context.Context, taskID string, status *api.TaskStatus) error {
 		log.G(ctx).WithFields(logrus.Fields{"task.id": taskID, "status": status}).Info("status update received")
 		return nil
@@ -53,7 +54,7 @@ func TestWorker(t *testing.T) {
 		// TODO(stevvooe): There are a few more states here we need to get
 		// covered to ensure correct during code changes.
 	} {
-		assert.NoError(t, worker.Assign(ctx, testcase.taskSet))
+		assert.NoError(t, worker.AssignTasks(ctx, testcase.taskSet))
 
 		var (
 			tasks    []*api.Task

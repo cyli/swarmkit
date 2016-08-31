@@ -17,6 +17,12 @@ const (
 	maxSessionFailureBackoff     = 8 * time.Second
 )
 
+// Secrets is a map that keeps all the currenty available secrets to the agent
+type Secrets struct {
+	sync.RWMutex
+	m map[string]*api.Secret
+}
+
 // Agent implements the primary node functionality for a member of a swarm
 // cluster. The primary functionality is to run and report on the status of
 // tasks assigned to the node.
@@ -47,9 +53,11 @@ func New(config *Config) (*Agent, error) {
 		return nil, err
 	}
 
+	secrets := &Secrets{m: make(map[string]*api.Secret)}
+
 	a := &Agent{
 		config:   config,
-		worker:   newWorker(config.DB, config.Executor),
+		worker:   newWorker(config.DB, config.Executor, secrets),
 		sessionq: make(chan sessionOperation),
 		started:  make(chan struct{}),
 		stopped:  make(chan struct{}),
@@ -161,11 +169,19 @@ func (a *Agent) run(ctx context.Context) {
 		case msg := <-session.assignments:
 			switch msg.Type {
 			case api.AssignmentsMessage_COMPLETE:
-				if err := a.worker.Assign(ctx, msg.UpdateTasks); err != nil {
+				// Need to assign secrets before tasks, because tasks might depend on new secrets
+				if err := a.worker.AssignSecrets(ctx, msg.UpdateSecrets); err != nil {
+					log.G(ctx).WithError(err).Error("failed to assign worker secrets")
+				}
+				if err := a.worker.AssignTasks(ctx, msg.UpdateTasks); err != nil {
 					log.G(ctx).WithError(err).Error("failed to assign worker assignments")
 				}
 			case api.AssignmentsMessage_INCREMENTAL:
-				if err := a.worker.Update(ctx, msg.UpdateTasks, msg.RemoveTasks); err != nil {
+				// Need to update secrets before tasks, because tasks might depend on new secrets
+				if err := a.worker.UpdateSecrets(ctx, msg.UpdateSecrets, msg.RemoveSecrets); err != nil {
+					log.G(ctx).WithError(err).Error("failed to update worker secrets")
+				}
+				if err := a.worker.UpdateTasks(ctx, msg.UpdateTasks, msg.RemoveTasks); err != nil {
 					log.G(ctx).WithError(err).Error("failed to update worker assignments")
 				}
 			}
