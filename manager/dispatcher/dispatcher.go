@@ -947,7 +947,7 @@ func (d *Dispatcher) Assignments(r *api.AssignmentsRequest, stream api.Dispatche
 				// TODO(aaronl): For node secrets, we'll need to handle
 				// EventCreateSecret.
 				case state.EventUpdateSecret:
-					if _, exists := tasksUsingSecret[v.Secret.Spec.Annotations.Name]; !exists {
+					if _, exists := tasksUsingSecret[v.Secret.Name]; !exists {
 						continue
 					}
 
@@ -955,11 +955,11 @@ func (d *Dispatcher) Assignments(r *api.AssignmentsRequest, stream api.Dispatche
 
 					oneModification()
 				case state.EventDeleteSecret:
-					if _, exists := tasksUsingSecret[v.Secret.Spec.Annotations.Name]; !exists {
+					if _, exists := tasksUsingSecret[v.Secret.Name]; !exists {
 						continue
 					}
 
-					delete(tasksUsingSecret, v.Secret.Spec.Annotations.Name)
+					delete(tasksUsingSecret, v.Secret.Name)
 
 					removeSecrets[v.Secret.ID] = struct{}{}
 

@@ -127,7 +127,7 @@ func (s secretEntry) EventDelete() state.Event {
 // Returns ErrExist if the ID is already taken.
 func CreateSecret(tx Tx, s *api.Secret) error {
 	// Ensure the name is not already in use.
-	if tx.lookup(tableSecret, indexName, strings.ToLower(s.Spec.Annotations.Name)) != nil {
+	if tx.lookup(tableSecret, indexName, strings.ToLower(s.Name)) != nil {
 		return ErrNameConflict
 	}
 
@@ -138,7 +138,7 @@ func CreateSecret(tx Tx, s *api.Secret) error {
 // Returns ErrNotExist if the secret doesn't exist.
 func UpdateSecret(tx Tx, s *api.Secret) error {
 	// Ensure the name is either not in use or already used by this same Secret.
-	if existing := tx.lookup(tableSecret, indexName, strings.ToLower(s.Spec.Annotations.Name)); existing != nil {
+	if existing := tx.lookup(tableSecret, indexName, strings.ToLower(s.Name)); existing != nil {
 		if existing.ID() != s.ID {
 			return ErrNameConflict
 		}
@@ -217,7 +217,7 @@ func (ci secretIndexerByName) FromObject(obj interface{}) (bool, []byte, error) 
 	}
 
 	// Add the null character as a terminator
-	return true, []byte(strings.ToLower(s.Spec.Annotations.Name) + "\x00"), nil
+	return true, []byte(strings.ToLower(s.Name) + "\x00"), nil
 }
 
 func (ci secretIndexerByName) PrefixFromArgs(args ...interface{}) ([]byte, error) {
