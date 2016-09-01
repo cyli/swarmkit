@@ -348,17 +348,18 @@ func TestAssignments(t *testing.T) {
 	secret1 := &api.Secret{
 		ID:   "Secret ID",
 		Name: "secret1",
-		SecretData: []*api.SecretData{&api.SecretData{
-			ID:     "IDsecret1",
-			Digest: "abc",
-			Spec: api.SecretSpec{
-				Annotations: api.Annotations{
-					Name: "secret1",
+		SecretData: map[string]*api.SecretData{
+			"IDsecret1": &api.SecretData{
+				ID:     "IDsecret1",
+				Digest: "abc",
+				Spec: api.SecretSpec{
+					Annotations: api.Annotations{
+						Name: "secret1",
+					},
+					Data: []byte("secret1"),
+					Type: api.SecretType_ContainerSecret,
 				},
-				Data: []byte("secret1"),
-				Type: api.SecretType_ContainerSecret,
 			},
-		},
 		},
 	}
 
@@ -442,7 +443,8 @@ func TestAssignments(t *testing.T) {
 	secret := resp.UpdateSecrets[0]
 	assert.True(t, secret.Name == "secret1")
 	assert.Len(t, secret.SecretData, 1)
-	secretData := secret.SecretData[0]
+	secretData, ok := secret.SecretData["IDsecret1"]
+	assert.True(t, ok)
 	assert.True(t, secretData.ID == "IDsecret1" && secretData.Digest == "abc" && secretData.Spec.Annotations.Name == "secret1" && secretData.Spec.Type == api.SecretType_ContainerSecret)
 	assert.Len(t, resp.RemoveSecrets, 0)
 

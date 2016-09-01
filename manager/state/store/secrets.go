@@ -105,6 +105,14 @@ func (s secretEntry) Meta() api.Meta {
 
 func (s secretEntry) SetMeta(meta api.Meta) {
 	s.Secret.Meta = meta
+	for _, secretData := range s.Secret.SecretData {
+		// if there is any secret data info that isn't set, update it
+		if secretData.Meta.CreatedAt == nil && secretData.Meta.UpdatedAt == nil {
+			newMeta := meta.Copy()
+			newMeta.CreatedAt = newMeta.UpdatedAt
+			secretData.Meta = *newMeta
+		}
+	}
 }
 
 func (s secretEntry) Copy() Object {
