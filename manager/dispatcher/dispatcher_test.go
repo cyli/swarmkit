@@ -327,7 +327,7 @@ func TestHeartbeatUnregistered(t *testing.T) {
 	assert.Equal(t, ErrSessionInvalid.Error(), grpc.ErrorDesc(err))
 }
 
-func TestTasks(t *testing.T) {
+func TestAssignments(t *testing.T) {
 	gd, err := startDispatcher(DefaultConfig())
 	assert.NoError(t, err)
 	defer gd.Close()
@@ -345,12 +345,43 @@ func TestTasks(t *testing.T) {
 		nodeID = resp.Node.ID
 	}
 
+	secret1 := &api.Secret{
+		ID:   "Secret ID",
+		Name: "secret1",
+		SecretData: []*api.SecretData{&api.SecretData{
+			ID:     "IDsecret1",
+			Digest: "abc",
+			Spec: api.SecretSpec{
+				Annotations: api.Annotations{
+					Name: "secret1",
+				},
+				Data: []byte("secret1"),
+				Type: api.SecretType_ContainerSecret,
+			},
+		},
+		},
+	}
+
 	testTask1 := &api.Task{
 		NodeID:       nodeID,
 		ID:           "testTask1",
 		Status:       api.TaskStatus{State: api.TaskStateAssigned},
 		DesiredState: api.TaskStateReady,
+		Spec: api.TaskSpec{
+			Runtime: &api.TaskSpec_Container{
+				Container: &api.ContainerSpec{
+					Secrets: []*api.SecretReference{
+						&api.SecretReference{
+							Name:         secret1.Name,
+							SecretDataID: secret1.ID,
+							Mode:         api.SecretReference_FILE,
+						},
+					},
+				},
+			},
+		},
 	}
+
 	testTask2 := &api.Task{
 		NodeID:       nodeID,
 		ID:           "testTask2",
@@ -379,12 +410,21 @@ func TestTasks(t *testing.T) {
 	// initially no tasks
 	assert.Equal(t, 0, len(resp.UpdateTasks))
 
+	// Create the secret
+	err = gd.Store.Update(func(tx store.Tx) error {
+		assert.NoError(t, store.CreateSecret(tx, secret1))
+		return nil
+	})
+	assert.NoError(t, err)
+
 	// Creating the tasks will not create an event for assignments
 	err = gd.Store.Update(func(tx store.Tx) error {
 		assert.NoError(t, store.CreateTask(tx, testTask1))
 		assert.NoError(t, store.CreateTask(tx, testTask2))
 		return nil
 	})
+
+	// Updating the task should invoke assignment changes
 	assert.NoError(t, err)
 	err = gd.Store.Update(func(tx store.Tx) error {
 		assert.NoError(t, store.UpdateTask(tx, testTask1))
@@ -397,14 +437,18 @@ func TestTasks(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, len(resp.UpdateTasks), 2)
 	assert.True(t, resp.UpdateTasks[0].ID == "testTask1" && resp.UpdateTasks[1].ID == "testTask2" || resp.UpdateTasks[0].ID == "testTask2" && resp.UpdateTasks[1].ID == "testTask1")
+	assert.Len(t, resp.RemoveTasks, 0)
+	assert.Len(t, resp.UpdateSecrets, 1)
+	secret := resp.UpdateSecrets[0]
+	assert.True(t, secret.Name == "secret1")
+	assert.Len(t, secret.SecretData, 1)
+	secretData := secret.SecretData[0]
+	assert.True(t, secretData.ID == "IDsecret1" && secretData.Digest == "abc" && secretData.Spec.Annotations.Name == "secret1" && secretData.Spec.Type == api.SecretType_ContainerSecret)
+	assert.Len(t, resp.RemoveSecrets, 0)
 
+	testTask1.DesiredState = api.TaskStateRunning
 	err = gd.Store.Update(func(tx store.Tx) error {
-		assert.NoError(t, store.UpdateTask(tx, &api.Task{
-			ID:           testTask1.ID,
-			NodeID:       nodeID,
-			Status:       api.TaskStatus{State: api.TaskStateAssigned},
-			DesiredState: api.TaskStateRunning,
-		}))
+		assert.NoError(t, store.UpdateTask(tx, testTask1))
 		return nil
 	})
 	assert.NoError(t, err)
@@ -417,6 +461,8 @@ func TestTasks(t *testing.T) {
 			assert.Equal(t, task.DesiredState, api.TaskStateRunning)
 		}
 	}
+	assert.Equal(t, 0, len(resp.UpdateSecrets))
+	assert.Equal(t, 0, len(resp.RemoveSecrets))
 
 	err = gd.Store.Update(func(tx store.Tx) error {
 		assert.NoError(t, store.DeleteTask(tx, testTask1.ID))
@@ -428,6 +474,8 @@ func TestTasks(t *testing.T) {
 	resp, err = stream.Recv()
 	assert.NoError(t, err)
 	assert.Equal(t, len(resp.UpdateTasks), 0)
+	assert.Equal(t, 0, len(resp.UpdateSecrets))
+	assert.Equal(t, 1, len(resp.RemoveSecrets))
 }
 
 func TestTasksStatusChange(t *testing.T) {

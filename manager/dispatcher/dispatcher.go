@@ -915,7 +915,6 @@ func (d *Dispatcher) Assignments(r *api.AssignmentsRequest, stream api.Dispatche
 
 					oneModification()
 				case state.EventDeleteTask:
-
 					if _, exists := tasksMap[v.Task.ID]; !exists {
 						continue
 					}
@@ -932,7 +931,9 @@ func (d *Dispatcher) Assignments(r *api.AssignmentsRequest, stream api.Dispatche
 					}
 					for _, secretRef := range container.Secrets {
 						secretName := secretRef.Name
+
 						if tasksUsingSecret[secretName] == nil {
+							removeSecrets[secretName] = struct{}{}
 							continue
 						}
 						delete(tasksUsingSecret[secretName], v.Task.ID)
