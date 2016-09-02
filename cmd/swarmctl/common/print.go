@@ -40,3 +40,15 @@ func TimestampAgo(ts *tspb.Timestamp) string {
 	}
 	return humanize.Time(t)
 }
+
+// TimestampTime returns the actual date of a timestamp
+func TimestampTime(ts *tspb.Timestamp) string {
+	if ts == nil {
+		return ""
+	}
+	t, err := ptypes.Timestamp(ts)
+	if err != nil {
+		panic(err)
+	}
+	return t.Format("Jan 2 2006 15:04")
+}
