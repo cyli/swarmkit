@@ -40,6 +40,19 @@ var (
 				return err
 			}
 
+			if cmd.Flags().Changed("secrets") {
+				if err := flagparser.UpdateSecretsToLatest(cmd, spec); err != nil {
+					return err
+				}
+			} else {
+				if err := flagparser.ParseAddSecret(cmd, spec, "add-secret"); err != nil {
+					return err
+				}
+				if err := flagparser.ParseRemoveSecret(cmd, spec, "rm-secret"); err != nil {
+					return err
+				}
+			}
+
 			if reflect.DeepEqual(spec, &service.Spec) {
 				return errors.New("no changes detected")
 			}
@@ -59,5 +72,8 @@ var (
 )
 
 func init() {
+	updateCmd.Flags().StringSlice("add-secret", nil, "add a new secret from swarm")
+	updateCmd.Flags().StringSlice("rm-secret", nil, "removes a secret from the service")
+	updateCmd.Flags().StringSlice("secrets", nil, "updates all secrets to the latest version - overrides --add-secret and --rm-secret")
 	flagparser.AddServiceFlags(updateCmd.Flags())
 }

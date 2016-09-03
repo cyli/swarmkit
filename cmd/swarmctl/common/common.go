@@ -38,6 +38,22 @@ func Dial(cmd *cobra.Command) (api.ControlClient, error) {
 	return client, nil
 }
 
+func DialGetConn(cmd *cobra.Command) (*grpc.ClientConn, error) {
+	addr, err := cmd.Flags().GetString("socket")
+	if err != nil {
+		return nil, err
+	}
+
+	opts := []grpc.DialOption{}
+	insecureCreds := credentials.NewTLS(&tls.Config{InsecureSkipVerify: true})
+	opts = append(opts, grpc.WithTransportCredentials(insecureCreds))
+	opts = append(opts, grpc.WithDialer(
+		func(addr string, timeout time.Duration) (net.Conn, error) {
+			return net.DialTimeout("unix", addr, timeout)
+		}))
+	return grpc.Dial(addr, opts...)
+}
+
 // Context returns a request context based on CLI arguments.
 func Context(cmd *cobra.Command) context.Context {
 	// TODO(aluzzardi): Actually create a context.
