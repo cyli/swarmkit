@@ -26,11 +26,10 @@ var _ WAL = &WrappedWAL{}
 var _ WAL = &wal.WAL{}
 
 // WrappedWAL wraps a github.com/coreos/etcd/wal.WAL, and handles encoding/decoding
-// which this object wraps
 type WrappedWAL struct {
 	*wal.WAL
-	encoder    encoder
-	getDecoder func(string) decoder
+	encoder  encoder
+	decoders map[string]decoder
 }
 
 // ReadAll wraps the wal.WAL.ReadAll() function, but it first checks to see if the
@@ -50,8 +49,8 @@ func (w *WrappedWAL) ReadAll() ([]byte, raftpb.HardState, []raftpb.Entry, error)
 		return wrappedRecord.Wrapped, state, ents, nil
 	}
 
-	d := w.getDecoder(wrappedRecord.Encoding)
-	if d == nil {
+	d, ok := w.decoders[wrappedRecord.Encoding]
+	if !ok || d == nil {
 		return nil, raftpb.HardState{}, nil, fmt.Errorf("no decoder available for %s", wrappedRecord.Encoding)
 	}
 
@@ -86,4 +85,54 @@ func (w *WrappedWAL) Save(st raftpb.HardState, ents []raftpb.Entry) error {
 		}
 	}
 	return w.WAL.Save(st, writeEnts)
+}
+
+// CreateWAL returns a new WAL object with the given encoders and decoders.
+func CreateWAL(dirpath string, metadata []byte, e encoder, decoders []decoder) (WAL, error) {
+	var err error
+	if e != nil {
+		wr := &WrappedRecord{
+			Wrapped:  metadata,
+			Encoding: e.ID(),
+		}
+		metadata, err = wr.Marshal()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	w, err := wal.Create(dirpath, metadata)
+	if err != nil {
+		return nil, err
+	}
+
+	mappedDecoders := make(map[string]decoder)
+	for _, dec := range decoders {
+		mappedDecoders[dec.ID()] = dec
+	}
+
+	return &WrappedWAL{
+		WAL:      w,
+		encoder:  e,
+		decoders: mappedDecoders,
+	}, nil
+}
+
+// OpenWAL returns a new WAL object with the given encoders and decoders.
+func OpenWAL(dirpath string, snap walpb.Snapshot, e encoder, decoders []decoder) (WAL, error) {
+	w, err := wal.Open(dirpath, snap)
+	if err != nil {
+		return nil, err
+	}
+
+	mappedDecoders := make(map[string]decoder)
+	for _, dec := range decoders {
+		mappedDecoders[dec.ID()] = dec
+	}
+
+	return &WrappedWAL{
+		WAL:      w,
+		encoder:  e,
+		decoders: mappedDecoders,
+	}, nil
 }
