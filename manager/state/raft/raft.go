@@ -20,13 +20,12 @@ import (
 	"github.com/coreos/etcd/pkg/idutil"
 	"github.com/coreos/etcd/raft"
 	"github.com/coreos/etcd/raft/raftpb"
-	"github.com/coreos/etcd/snap"
-	"github.com/coreos/etcd/wal"
 	"github.com/docker/go-events"
 	"github.com/docker/swarmkit/api"
 	"github.com/docker/swarmkit/ca"
 	"github.com/docker/swarmkit/log"
 	"github.com/docker/swarmkit/manager/raftselector"
+	"github.com/docker/swarmkit/manager/state/raft/encryption"
 	"github.com/docker/swarmkit/manager/state/raft/membership"
 	"github.com/docker/swarmkit/manager/state/store"
 	"github.com/docker/swarmkit/manager/state/watch"
@@ -91,8 +90,8 @@ type Node struct {
 	opts                NodeOptions
 	reqIDGen            *idutil.Generator
 	wait                *wait
-	wal                 *wal.WAL
-	snapshotter         *snap.Snapshotter
+	wal                 encryption.WAL
+	snapshotter         encryption.Snapshotter
 	campaignWhenAble    bool
 	signalledLeadership uint32
 	isMember            uint32
