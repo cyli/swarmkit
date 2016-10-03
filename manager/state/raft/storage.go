@@ -17,6 +17,7 @@ import (
 	"github.com/coreos/etcd/wal/walpb"
 	"github.com/docker/swarmkit/api"
 	"github.com/docker/swarmkit/log"
+	"github.com/docker/swarmkit/manager/state/raft/encryption"
 	"github.com/docker/swarmkit/manager/state/raft/membership"
 	"github.com/docker/swarmkit/manager/state/store"
 	"github.com/pkg/errors"
@@ -61,7 +62,7 @@ func (n *Node) loadAndStart(ctx context.Context, forceNewCluster bool) error {
 	}
 
 	// Create a snapshotter
-	n.snapshotter = snap.New(snapDir)
+	n.snapshotter = encryption.NewSnapshotter(snapDir, nil, nil)
 
 	if !wal.Exist(walDir) {
 		// If wals created by the etcd-v2 wal code exist, copy them to
@@ -80,6 +81,7 @@ func (n *Node) loadAndStart(ctx context.Context, forceNewCluster bool) error {
 	// Load snapshot data
 	snapshot, err := n.snapshotter.Load()
 	if err != nil && err != snap.ErrNoSnapshot {
+		fmt.Println("ERROR here")
 		return err
 	}
 
@@ -195,7 +197,7 @@ func (n *Node) createWAL(nodeID string) (raft.Peer, error) {
 	if err != nil {
 		return raft.Peer{}, errors.Wrap(err, "error marshalling raft node")
 	}
-	n.wal, err = wal.Create(n.walDir(), metadata)
+	n.wal, err = encryption.CreateWAL(n.walDir(), metadata, nil, nil)
 	if err != nil {
 		return raft.Peer{}, errors.Wrap(err, "failed to create WAL")
 	}
@@ -243,7 +245,7 @@ func (n *Node) readWAL(ctx context.Context, snapshot *raftpb.Snapshot, forceNewC
 
 	repaired := false
 	for {
-		if n.wal, err = wal.Open(n.walDir(), walsnap); err != nil {
+		if n.wal, err = encryption.OpenWAL(n.walDir(), walsnap, nil, nil); err != nil {
 			return errors.Wrap(err, "failed to open WAL")
 		}
 		if metadata, st, ents, err = n.wal.ReadAll(); err != nil {
