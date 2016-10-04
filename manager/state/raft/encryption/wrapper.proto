@@ -3,6 +3,7 @@ syntax = "proto3";
 package docker.swarmkit.v1;
 
 message WrappedRecord {
-    bytes wrapped = 1;
-    string encoding = 2;
+    bytes data = 1;
+    int64 data_len = 2;
+    string encoding = 3;
 }

@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-var fakeSnapshotData = raftpb.Snapshot{
+var fakeSnapshot = raftpb.Snapshot{
 	Data: []byte("snapshotdata"),
 	Metadata: raftpb.SnapshotMetadata{
 		ConfState: raftpb.ConfState{Nodes: []uint64{3}},
@@ -42,18 +42,18 @@ func TestSnapshotterLoadOrReadUnencodedSnapshot(t *testing.T) {
 	defer os.RemoveAll(tempdir)
 
 	ogSnap := snap.New(tempdir)
-	require.NoError(t, ogSnap.SaveSnap(fakeSnapshotData))
+	require.NoError(t, ogSnap.SaveSnap(fakeSnapshot))
 
 	decoders := []decoder{&meowCoder{}}
 	wrapped := NewSnapshotter(tempdir, nil, decoders)
 
 	readSnap, err := wrapped.Load()
 	require.NoError(t, err)
-	require.Equal(t, fakeSnapshotData, *readSnap)
+	require.Equal(t, fakeSnapshot, *readSnap)
 
 	readSnap, err = ReadSnap(getSnapshotFile(t, tempdir), decoders)
 	require.NoError(t, err)
-	require.Equal(t, fakeSnapshotData, *readSnap)
+	require.Equal(t, fakeSnapshot, *readSnap)
 }
 
 // Snapshotter can read snapshots produced with an empty encoding
@@ -64,12 +64,13 @@ func TestSnapshotterLoadEmptyEncodingSnapshot(t *testing.T) {
 
 	ogSnap := snap.New(tempdir)
 	wr := WrappedRecord{
-		Wrapped: fakeSnapshotData.Data,
+		Data:    fakeSnapshot.Data,
+		DataLen: int64(len(fakeSnapshot.Data)),
 	}
 	wrData, err := wr.Marshal()
 	require.NoError(t, err)
 
-	emptyEncodingFakeData := fakeSnapshotData
+	emptyEncodingFakeData := fakeSnapshot
 	emptyEncodingFakeData.Data = wrData
 
 	require.NoError(t, ogSnap.SaveSnap(emptyEncodingFakeData))
@@ -79,11 +80,11 @@ func TestSnapshotterLoadEmptyEncodingSnapshot(t *testing.T) {
 
 	readSnap, err := wrapped.Load()
 	require.NoError(t, err)
-	require.Equal(t, fakeSnapshotData, *readSnap)
+	require.Equal(t, fakeSnapshot, *readSnap)
 
 	readSnap, err = ReadSnap(getSnapshotFile(t, tempdir), decoders)
 	require.NoError(t, err)
-	require.Equal(t, fakeSnapshotData, *readSnap)
+	require.Equal(t, fakeSnapshot, *readSnap)
 }
 
 // If there is no decoder for a snapshot, decoding fails
@@ -96,13 +97,14 @@ func TestSnapshotterLoadNoDecoder(t *testing.T) {
 
 	ogSnap := snap.New(tempdir)
 	wr := WrappedRecord{
-		Wrapped:  fakeSnapshotData.Data,
+		Data:     fakeSnapshot.Data,
+		DataLen:  int64(len(fakeSnapshot.Data)),
 		Encoding: coder.ID(),
 	}
 	wrData, err := wr.Marshal()
 	require.NoError(t, err)
 
-	emptyEncodingFakeData := fakeSnapshotData
+	emptyEncodingFakeData := fakeSnapshot
 	emptyEncodingFakeData.Data = wrData
 
 	require.NoError(t, ogSnap.SaveSnap(emptyEncodingFakeData))
@@ -128,13 +130,14 @@ func TestSnapshotterLoadDecodingFail(t *testing.T) {
 
 	ogSnap := snap.New(tempdir)
 	wr := WrappedRecord{
-		Wrapped:  fakeSnapshotData.Data,
+		Data:     fakeSnapshot.Data,
+		DataLen:  int64(len(fakeSnapshot.Data)),
 		Encoding: coder.ID(),
 	}
 	wrData, err := wr.Marshal()
 	require.NoError(t, err)
 
-	emptyEncodingFakeData := fakeSnapshotData
+	emptyEncodingFakeData := fakeSnapshot
 	emptyEncodingFakeData.Data = wrData
 
 	require.NoError(t, ogSnap.SaveSnap(emptyEncodingFakeData))
@@ -159,13 +162,13 @@ func TestSnapshotterSavesSnapshotNoEncoding(t *testing.T) {
 	defer os.RemoveAll(tempdir)
 
 	wrapped := NewSnapshotter(tempdir, nil, nil)
-	require.NoError(t, wrapped.SaveSnap(fakeSnapshotData))
+	require.NoError(t, wrapped.SaveSnap(fakeSnapshot))
 
 	ogSnap := snap.New(tempdir)
 	readSnap, err := ogSnap.Load()
 	require.NoError(t, err)
 
-	require.Equal(t, fakeSnapshotData, *readSnap)
+	require.Equal(t, fakeSnapshot, *readSnap)
 }
 
 // If an encoder is passed to Snapshotter, the resulting snapshot data (but not
@@ -176,14 +179,14 @@ func TestSnapshotterSavesSnapshotWithEncoding(t *testing.T) {
 	defer os.RemoveAll(tempdir)
 
 	wrapped := NewSnapshotter(tempdir, &meowCoder{}, nil)
-	require.NoError(t, wrapped.SaveSnap(fakeSnapshotData))
+	require.NoError(t, wrapped.SaveSnap(fakeSnapshot))
 
 	ogSnap := snap.New(tempdir)
 	readSnap, err := ogSnap.Load()
 	require.NoError(t, err)
 
-	require.Equal(t, fakeSnapshotData.Metadata, readSnap.Metadata)
-	require.NotEqual(t, fakeSnapshotData.Data, readSnap.Data)
+	require.Equal(t, fakeSnapshot.Metadata, readSnap.Metadata)
+	require.NotEqual(t, fakeSnapshot.Data, readSnap.Data)
 }
 
 // If an encoder is passed to Snapshotter, but encoding the data fails, the
@@ -194,9 +197,9 @@ func TestSnapshotterSavesSnapshotEncodingFails(t *testing.T) {
 	defer os.RemoveAll(tempdir)
 
 	wrapped := NewSnapshotter(tempdir, &meowCoder{encodeFailures: map[string]struct{}{
-		fmt.Sprintf("%d_%d", fakeSnapshotData.Metadata.Index, fakeSnapshotData.Metadata.Term): struct{}{},
+		fmt.Sprintf("%d_%d", fakeSnapshot.Metadata.Index, fakeSnapshot.Metadata.Term): struct{}{},
 	}}, nil)
-	err = wrapped.SaveSnap(fakeSnapshotData)
+	err = wrapped.SaveSnap(fakeSnapshot)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "refusing to encode")
 
@@ -215,9 +218,9 @@ func TestSaveAndLoad(t *testing.T) {
 		defer os.RemoveAll(tempdir)
 
 		wrapped := NewSnapshotter(tempdir, e, []decoder{coder})
-		require.NoError(t, wrapped.SaveSnap(fakeSnapshotData))
+		require.NoError(t, wrapped.SaveSnap(fakeSnapshot))
 		readSnap, err := wrapped.Load()
 		require.NoError(t, err)
-		require.Equal(t, fakeSnapshotData, *readSnap)
+		require.Equal(t, fakeSnapshot, *readSnap)
 	}
 }

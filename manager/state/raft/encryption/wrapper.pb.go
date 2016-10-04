@@ -37,8 +37,9 @@ var _ = math.Inf
 const _ = proto.GoGoProtoPackageIsVersion2 // please upgrade the proto package
 
 type WrappedRecord struct {
-	Wrapped  []byte `protobuf:"bytes,1,opt,name=wrapped,proto3" json:"wrapped,omitempty"`
-	Encoding string `protobuf:"bytes,2,opt,name=encoding,proto3" json:"encoding,omitempty"`
+	Data     []byte `protobuf:"bytes,1,opt,name=data,proto3" json:"data,omitempty"`
+	DataLen  int64  `protobuf:"varint,2,opt,name=data_len,json=dataLen,proto3" json:"data_len,omitempty"`
+	Encoding string `protobuf:"bytes,3,opt,name=encoding,proto3" json:"encoding,omitempty"`
 }
 
 func (m *WrappedRecord) Reset()                    { *m = WrappedRecord{} }
@@ -52,9 +53,10 @@ func (this *WrappedRecord) GoString() string {
 	if this == nil {
 		return "nil"
 	}
-	s := make([]string, 0, 6)
+	s := make([]string, 0, 7)
 	s = append(s, "&encryption.WrappedRecord{")
-	s = append(s, "Wrapped: "+fmt.Sprintf("%#v", this.Wrapped)+",\n")
+	s = append(s, "Data: "+fmt.Sprintf("%#v", this.Data)+",\n")
+	s = append(s, "DataLen: "+fmt.Sprintf("%#v", this.DataLen)+",\n")
 	s = append(s, "Encoding: "+fmt.Sprintf("%#v", this.Encoding)+",\n")
 	s = append(s, "}")
 	return strings.Join(s, "")
@@ -100,14 +102,19 @@ func (m *WrappedRecord) MarshalTo(data []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
-	if len(m.Wrapped) > 0 {
+	if len(m.Data) > 0 {
 		data[i] = 0xa
 		i++
-		i = encodeVarintWrapper(data, i, uint64(len(m.Wrapped)))
-		i += copy(data[i:], m.Wrapped)
+		i = encodeVarintWrapper(data, i, uint64(len(m.Data)))
+		i += copy(data[i:], m.Data)
+	}
+	if m.DataLen != 0 {
+		data[i] = 0x10
+		i++
+		i = encodeVarintWrapper(data, i, uint64(m.DataLen))
 	}
 	if len(m.Encoding) > 0 {
-		data[i] = 0x12
+		data[i] = 0x1a
 		i++
 		i = encodeVarintWrapper(data, i, uint64(len(m.Encoding)))
 		i += copy(data[i:], m.Encoding)
@@ -145,9 +152,12 @@ func encodeVarintWrapper(data []byte, offset int, v uint64) int {
 func (m *WrappedRecord) Size() (n int) {
 	var l int
 	_ = l
-	l = len(m.Wrapped)
+	l = len(m.Data)
 	if l > 0 {
 		n += 1 + l + sovWrapper(uint64(l))
+	}
+	if m.DataLen != 0 {
+		n += 1 + sovWrapper(uint64(m.DataLen))
 	}
 	l = len(m.Encoding)
 	if l > 0 {
@@ -174,7 +184,8 @@ func (this *WrappedRecord) String() string {
 		return "nil"
 	}
 	s := strings.Join([]string{`&WrappedRecord{`,
-		`Wrapped:` + fmt.Sprintf("%v", this.Wrapped) + `,`,
+		`Data:` + fmt.Sprintf("%v", this.Data) + `,`,
+		`DataLen:` + fmt.Sprintf("%v", this.DataLen) + `,`,
 		`Encoding:` + fmt.Sprintf("%v", this.Encoding) + `,`,
 		`}`,
 	}, "")
@@ -219,7 +230,7 @@ func (m *WrappedRecord) Unmarshal(data []byte) error {
 		switch fieldNum {
 		case 1:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Wrapped", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field Data", wireType)
 			}
 			var byteLen int
 			for shift := uint(0); ; shift += 7 {
@@ -243,12 +254,31 @@ func (m *WrappedRecord) Unmarshal(data []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Wrapped = append(m.Wrapped[:0], data[iNdEx:postIndex]...)
-			if m.Wrapped == nil {
-				m.Wrapped = []byte{}
+			m.Data = append(m.Data[:0], data[iNdEx:postIndex]...)
+			if m.Data == nil {
+				m.Data = []byte{}
 			}
 			iNdEx = postIndex
 		case 2:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field DataLen", wireType)
+			}
+			m.DataLen = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowWrapper
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := data[iNdEx]
+				iNdEx++
+				m.DataLen |= (int64(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 3:
 			if wireType != 2 {
 				return fmt.Errorf("proto: wrong wireType = %d for field Encoding", wireType)
 			}
@@ -406,15 +436,16 @@ var (
 func init() { proto.RegisterFile("wrapper.proto", fileDescriptorWrapper) }
 
 var fileDescriptorWrapper = []byte{
-	// 146 bytes of a gzipped FileDescriptorProto
+	// 170 bytes of a gzipped FileDescriptorProto
 	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x09, 0x6e, 0x88, 0x02, 0xff, 0xe2, 0xe2, 0x2d, 0x2f, 0x4a, 0x2c,
 	0x28, 0x48, 0x2d, 0xd2, 0x2b, 0x28, 0xca, 0x2f, 0xc9, 0x17, 0x12, 0x4a, 0xc9, 0x4f, 0xce, 0x4e,
-	0x2d, 0xd2, 0x2b, 0x2e, 0x4f, 0x2c, 0xca, 0xcd, 0xce, 0x2c, 0xd1, 0x2b, 0x33, 0x54, 0x72, 0xe5,
-	0xe2, 0x0d, 0x07, 0x2b, 0x4a, 0x09, 0x4a, 0x4d, 0xce, 0x2f, 0x4a, 0x11, 0x92, 0xe0, 0x62, 0x87,
-	0xe8, 0x4a, 0x91, 0x60, 0x54, 0x60, 0xd4, 0xe0, 0x09, 0x82, 0x71, 0x85, 0xa4, 0xb8, 0x38, 0x52,
-	0xf3, 0x92, 0xf3, 0x53, 0x32, 0xf3, 0xd2, 0x25, 0x98, 0x14, 0x18, 0x35, 0x38, 0x83, 0xe0, 0x7c,
-	0x27, 0x99, 0x13, 0x0f, 0xe5, 0x18, 0x6e, 0x3c, 0x94, 0x63, 0xf8, 0xf0, 0x50, 0x8e, 0xb1, 0xe1,
-	0x91, 0x1c, 0xe3, 0x89, 0x47, 0x72, 0x8c, 0x17, 0x1e, 0xc9, 0x31, 0x3e, 0x78, 0x24, 0xc7, 0x98,
-	0xc4, 0x06, 0xb6, 0xdf, 0x18, 0x10, 0x00, 0x00, 0xff, 0xff, 0xb3, 0xe5, 0x4d, 0x67, 0x90, 0x00,
-	0x00, 0x00,
+	0x2d, 0xd2, 0x2b, 0x2e, 0x4f, 0x2c, 0xca, 0xcd, 0xce, 0x2c, 0xd1, 0x2b, 0x33, 0x54, 0x8a, 0xe2,
+	0xe2, 0x0d, 0x07, 0x2b, 0x4a, 0x09, 0x4a, 0x4d, 0xce, 0x2f, 0x4a, 0x11, 0x12, 0xe2, 0x62, 0x49,
+	0x49, 0x2c, 0x49, 0x94, 0x60, 0x54, 0x60, 0xd4, 0xe0, 0x09, 0x02, 0xb3, 0x85, 0x24, 0xb9, 0x38,
+	0x40, 0x74, 0x7c, 0x4e, 0x6a, 0x9e, 0x04, 0x93, 0x02, 0xa3, 0x06, 0x73, 0x10, 0x3b, 0x88, 0xef,
+	0x93, 0x9a, 0x27, 0x24, 0xc5, 0xc5, 0x91, 0x9a, 0x97, 0x9c, 0x9f, 0x92, 0x99, 0x97, 0x2e, 0xc1,
+	0xac, 0xc0, 0xa8, 0xc1, 0x19, 0x04, 0xe7, 0x3b, 0xc9, 0x9c, 0x78, 0x28, 0xc7, 0x70, 0xe3, 0xa1,
+	0x1c, 0xc3, 0x87, 0x87, 0x72, 0x8c, 0x0d, 0x8f, 0xe4, 0x18, 0x4f, 0x3c, 0x92, 0x63, 0xbc, 0xf0,
+	0x48, 0x8e, 0xf1, 0xc1, 0x23, 0x39, 0xc6, 0x24, 0x36, 0xb0, 0xa3, 0x8c, 0x01, 0x01, 0x00, 0x00,
+	0xff, 0xff, 0x04, 0x90, 0xad, 0xf2, 0xa5, 0x00, 0x00, 0x00,
 }

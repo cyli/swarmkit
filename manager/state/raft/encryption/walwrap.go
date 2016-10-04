@@ -45,8 +45,8 @@ func (w *WrappedWAL) ReadAll() ([]byte, raftpb.HardState, []raftpb.Entry, error)
 		return metadata, state, ents, err
 	}
 
-	if wrappedRecord.Encoding == "" {
-		return wrappedRecord.Wrapped, state, ents, nil
+	if wrappedRecord.Encoding == "" || wrappedRecord.DataLen != int64(len(wrappedRecord.Data)) {
+		return wrappedRecord.Data, state, ents, nil
 	}
 
 	d, ok := w.decoders[wrappedRecord.Encoding]
@@ -62,7 +62,7 @@ func (w *WrappedWAL) ReadAll() ([]byte, raftpb.HardState, []raftpb.Entry, error)
 		ents[i].Data = entData
 	}
 
-	return wrappedRecord.Wrapped, state, ents, nil
+	return wrappedRecord.Data, state, ents, nil
 }
 
 // Save encodes the entry data (if an encoder is exists) before passing it onto the
@@ -92,7 +92,8 @@ func CreateWAL(dirpath string, metadata []byte, e encoder, decoders []decoder) (
 	var err error
 	if e != nil {
 		wr := &WrappedRecord{
-			Wrapped:  metadata,
+			Data:     metadata,
+			DataLen:  int64(len(metadata)),
 			Encoding: e.ID(),
 		}
 		metadata, err = wr.Marshal()

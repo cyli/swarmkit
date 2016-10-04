@@ -72,7 +72,7 @@ func TestReadAllNoWrapping(t *testing.T) {
 // WAL can read entries are not wrapped, but not encoded
 func TestReadAllWrappedNoEncoding(t *testing.T) {
 	ogMeta, entries, snapshot := makeWALData()
-	r := WrappedRecord{Wrapped: ogMeta}
+	r := WrappedRecord{Data: ogMeta, DataLen: int64(len(ogMeta))}
 	metadata, err := r.Marshal()
 	require.NoError(t, err)
 
@@ -93,7 +93,8 @@ func TestReadAllWrappedNoEncoding(t *testing.T) {
 func TestReadAllNoSupportedDecoder(t *testing.T) {
 	metadata, entries, snapshot := makeWALData()
 	r := WrappedRecord{
-		Wrapped:  metadata,
+		Data:     metadata,
+		DataLen:  int64(len(metadata)),
 		Encoding: "no-decoder",
 	}
 	var err error
@@ -120,7 +121,8 @@ func TestReadAllEntryIncorrectlyEncoded(t *testing.T) {
 
 	// metadata is correctly encoded, but entries are not meow-encoded
 	r := WrappedRecord{
-		Wrapped:  metadata,
+		Data:     metadata,
+		DataLen:  int64(len(metadata)),
 		Encoding: coder.ID(),
 	}
 	var err error

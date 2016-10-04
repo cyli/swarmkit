@@ -52,7 +52,8 @@ func (s *WrappedSnap) SaveSnap(snapshot raftpb.Snapshot) error {
 		wrapped := WrappedRecord{
 			Encoding: s.encoder.ID(),
 		}
-		wrapped.Wrapped, err = s.encoder.Encode(snapshot.Metadata.Index, snapshot.Metadata.Term, snapshot.Data)
+		wrapped.Data, err = s.encoder.Encode(snapshot.Metadata.Index, snapshot.Metadata.Term, snapshot.Data)
+		wrapped.DataLen = int64(len(wrapped.Data))
 		if err != nil {
 			return fmt.Errorf("unable to encode entry data: %s", err.Error())
 		}
@@ -102,8 +103,8 @@ func decodeSnaphot(snapshot *raftpb.Snapshot, decoders map[string]decoder) error
 		return nil
 	}
 
-	if wrappedRecord.Encoding == "" {
-		snapshot.Data = wrappedRecord.Wrapped
+	if wrappedRecord.Encoding == "" || wrappedRecord.DataLen != int64(len(wrappedRecord.Data)) {
+		snapshot.Data = wrappedRecord.Data
 		return nil
 	}
 
@@ -112,7 +113,7 @@ func decodeSnaphot(snapshot *raftpb.Snapshot, decoders map[string]decoder) error
 		return fmt.Errorf("no decoder available for %s", wrappedRecord.Encoding)
 	}
 
-	snapshot.Data, err = d.Decode(snapshot.Metadata.Index, snapshot.Metadata.Term, wrappedRecord.Wrapped)
+	snapshot.Data, err = d.Decode(snapshot.Metadata.Index, snapshot.Metadata.Term, wrappedRecord.Data)
 	if err != nil {
 		return fmt.Errorf("unable to decode snapshot: %s", err.Error())
 	}
