@@ -26,7 +26,3 @@ func (m *meowCoder) Decode(index, term uint64, orig []byte) ([]byte, error) {
 	}
 	return bytes.TrimSuffix(orig, []byte("🐱")), nil
 }
-
-func (m *meowCoder) ID() string {
-	return "🐱-coder"
-}

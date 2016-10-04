@@ -25,12 +25,12 @@ var _ Snapshotter = &snap.Snapshotter{}
 // encoding/decoding.
 type WrappedSnap struct {
 	*snap.Snapshotter
-	encoder encoder
-	decoder decoder
+	encoder Encoder
+	decoder Decoder
 }
 
 // NewSnapshotter returns a new Snapshotter with the given encoders and decoders
-func NewSnapshotter(dirpath string, e encoder, d decoder) Snapshotter {
+func NewSnapshotter(dirpath string, e Encoder, d Decoder) Snapshotter {
 	return &WrappedSnap{
 		Snapshotter: snap.New(dirpath),
 		encoder:     e,
@@ -68,7 +68,7 @@ func (s *WrappedSnap) Load() (*raftpb.Snapshot, error) {
 }
 
 // ReadSnap reads the snapshot named by snapname using the given decoders and returns the snapshot.
-func ReadSnap(snapname string, d decoder) (*raftpb.Snapshot, error) {
+func ReadSnap(snapname string, d Decoder) (*raftpb.Snapshot, error) {
 	snapshot, err := snap.Read(snapname)
 	if err != nil {
 		return nil, err
@@ -80,7 +80,7 @@ func ReadSnap(snapname string, d decoder) (*raftpb.Snapshot, error) {
 	return snapshot, nil
 }
 
-func decodeSnaphot(snapshot *raftpb.Snapshot, d decoder) error {
+func decodeSnaphot(snapshot *raftpb.Snapshot, d Decoder) error {
 	if d == nil {
 		return fmt.Errorf("no decoder available")
 	}

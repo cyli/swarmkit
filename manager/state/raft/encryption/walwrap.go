@@ -28,8 +28,8 @@ var _ WAL = &wal.WAL{}
 // WrappedWAL wraps a github.com/coreos/etcd/wal.WAL, and handles encoding/decoding
 type WrappedWAL struct {
 	*wal.WAL
-	encoder encoder
-	decoder decoder
+	encoder Encoder
+	decoder Decoder
 }
 
 // ReadAll wraps the wal.WAL.ReadAll() function, but it decodes the entries if
@@ -78,7 +78,7 @@ func (w *WrappedWAL) Save(st raftpb.HardState, ents []raftpb.Entry) error {
 }
 
 // CreateWAL returns a new WAL object with the given encoders and decoders.
-func CreateWAL(dirpath string, metadata []byte, e encoder, d decoder) (WAL, error) {
+func CreateWAL(dirpath string, metadata []byte, e Encoder, d Decoder) (WAL, error) {
 	w, err := wal.Create(dirpath, metadata)
 	if err != nil {
 		return nil, err
@@ -92,7 +92,7 @@ func CreateWAL(dirpath string, metadata []byte, e encoder, d decoder) (WAL, erro
 }
 
 // OpenWAL returns a new WAL object with the given encoders and decoders.
-func OpenWAL(dirpath string, snap walpb.Snapshot, e encoder, d decoder) (WAL, error) {
+func OpenWAL(dirpath string, snap walpb.Snapshot, e Encoder, d Decoder) (WAL, error) {
 	w, err := wal.Open(dirpath, snap)
 	if err != nil {
 		return nil, err

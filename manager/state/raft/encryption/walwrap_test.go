@@ -181,3 +181,64 @@ func TestCreateOpenInvalidDirFails(t *testing.T) {
 	_, err = OpenWAL("/not/existing/directory", walpb.Snapshot{}, nil, nil)
 	require.Error(t, err)
 }
+
+// NoopCoder can read data produced by a wal.WAL
+func TestReadAllNoopDecoder(t *testing.T) {
+	metadata, entries, snapshot := makeWALData()
+	tempdir := createWithRegularWAL(t, metadata, snapshot, entries)
+	defer os.RemoveAll(tempdir)
+
+	ogWAL, err := wal.Open(tempdir, snapshot)
+	require.NoError(t, err)
+	meta, state, ents, err := ogWAL.ReadAll()
+	require.NoError(t, err)
+	require.NoError(t, ogWAL.Close())
+
+	wrapped, err := OpenWAL(tempdir, snapshot, nil, Noop)
+	require.NoError(t, err)
+	metaW, stateW, entsW, err := wrapped.ReadAll()
+	require.NoError(t, err)
+	require.NoError(t, wrapped.Close())
+
+	require.Equal(t, meta, metaW)
+	require.Equal(t, state, stateW)
+	require.Equal(t, ents, entsW)
+
+	require.Equal(t, metadata, metaW)
+	require.Equal(t, entries, entsW)
+}
+
+// NoopCoder can save data that is readable by a wal.WAL
+func TestSaveNoopEncoder(t *testing.T) {
+	metadata, entries, snapshot := makeWALData()
+
+	tempdir, err := ioutil.TempDir("", "waltests")
+	require.NoError(t, err)
+	defer os.RemoveAll(tempdir)
+
+	wrapped, err := CreateWAL(tempdir, metadata, Noop, nil)
+	require.NoError(t, err)
+
+	require.NoError(t, wrapped.SaveSnapshot(snapshot))
+	require.NoError(t, wrapped.Save(raftpb.HardState{}, entries))
+	require.NoError(t, wrapped.Close())
+
+	wrapped, err = OpenWAL(tempdir, snapshot, nil, Noop)
+	require.NoError(t, err)
+	metaW, stateW, entsW, err := wrapped.ReadAll()
+	require.NoError(t, err)
+	require.NoError(t, wrapped.Close())
+
+	ogWAL, err := wal.Open(tempdir, snapshot)
+	require.NoError(t, err)
+	defer ogWAL.Close()
+
+	meta, state, ents, err := ogWAL.ReadAll()
+	require.NoError(t, err)
+	require.Equal(t, metaW, meta)
+	require.Equal(t, stateW, state)
+	require.Equal(t, entsW, ents)
+
+	require.Equal(t, metadata, meta)
+	require.Equal(t, entries, ents)
+}

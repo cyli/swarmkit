@@ -128,3 +128,40 @@ func TestSaveAndLoad(t *testing.T) {
 	readSnapOG, err := ogSnap.Load()
 	require.NotEqual(t, readSnap, readSnapOG)
 }
+
+// Snapshotter, with a noop decoder, can read snapshots written by a regular snap.Snapshot
+func TestSnapshotterLoadOrReadNoopDecoder(t *testing.T) {
+	tempdir, err := ioutil.TempDir("", "snapwrap")
+	require.NoError(t, err)
+	defer os.RemoveAll(tempdir)
+
+	ogSnap := snap.New(tempdir)
+	require.NoError(t, ogSnap.SaveSnap(fakeSnapshot))
+
+	wrapped := NewSnapshotter(tempdir, nil, Noop)
+
+	readSnap, err := wrapped.Load()
+	require.NoError(t, err)
+	require.Equal(t, fakeSnapshot, *readSnap)
+
+	readSnap, err = ReadSnap(getSnapshotFile(t, tempdir), Noop)
+	require.NoError(t, err)
+	require.Equal(t, fakeSnapshot, *readSnap)
+}
+
+// If a noop encoder is passed to Snapshotter, the resulting snapshot can be
+// read by the regular snap.Snapshotter
+func TestSnapshotterSavesNoopEncoder(t *testing.T) {
+	tempdir, err := ioutil.TempDir("", "snapwrap")
+	require.NoError(t, err)
+	defer os.RemoveAll(tempdir)
+
+	wrapped := NewSnapshotter(tempdir, Noop, nil)
+	require.NoError(t, wrapped.SaveSnap(fakeSnapshot))
+
+	ogSnap := snap.New(tempdir)
+	readSnap, err := ogSnap.Load()
+	require.NoError(t, err)
+
+	require.Equal(t, fakeSnapshot, *readSnap)
+}
