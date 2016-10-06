@@ -331,6 +331,26 @@ func TestHeartbeatUnregistered(t *testing.T) {
 	assert.Equal(t, ErrSessionInvalid.Error(), grpc.ErrorDesc(err))
 }
 
+// If the session ID is not sent as part of the Assignments request, an error is returned to the stream
+func TestAssignmentsErrorsIfNoSessionID(t *testing.T) {
+	t.Parallel()
+
+	gd, err := startDispatcher(DefaultConfig())
+	assert.NoError(t, err)
+	defer gd.Close()
+
+	// without correct SessionID should fail
+	stream, err := gd.Clients[0].Assignments(context.Background(), &api.AssignmentsRequest{})
+	assert.NoError(t, err)
+	assert.NotNil(t, stream)
+	defer stream.CloseSend()
+
+	resp, err := stream.Recv()
+	assert.Nil(t, resp)
+	assert.Error(t, err)
+	assert.Equal(t, grpc.Code(err), codes.InvalidArgument)
+}
+
 // Assignments will send down any existing node tasks > ASSIGNED, and any secrets
 // for said tasks that are <= RUNNING (if the secrets exist)
 func TestAssignmentsInitialNodeTasks(t *testing.T) {
@@ -418,24 +438,46 @@ func TestAssignmentsInitialNodeTasks(t *testing.T) {
 		assert.NotNil(t, secretChanges[idAndAction{id: secret.ID, action: api.AssignmentChange_AssignmentActionRemove}])
 	}
 
-	// TODO (cyli): this assumption does not seem to be true
-	// deleting the secrets underneath the task should trigger a secret removal change, at least probably for any tasks
-	// >= ASSIGNED and <= RUNNING
-	// err = gd.Store.Update(func(tx store.Tx) error {
-	// 	for _, secret := range secrets[3 : len(secrets)-5] {
-	// 		assert.NoError(t, store.DeleteSecret(tx, secret.ID))
-	// 	}
-	// 	return nil
-	// })
-	// assert.NoError(t, err)
+	// updating used secrets triggers a secret update change for the tasks >= ASSIGNED and <= RUNNING
+	err = gd.Store.Update(func(tx store.Tx) error {
+		for _, secret := range secrets[:len(secrets)-2] {
+			secret.Spec.Data = []byte("new secret data")
+			assert.NoError(t, store.UpdateSecret(tx, secret))
+		}
+		return nil
+	})
+	assert.NoError(t, err)
 
-	// resp, err = stream.Recv()
-	// assert.NoError(t, err)
+	resp, err = stream.Recv()
+	assert.NoError(t, err)
 
-	// assert.Equal(t, 6, len(resp.Changes))
-	// for _, secret := range secrets[3:9] {
-	// 	assert.NotNil(t, secretChanges[idAndAction{id: secret.ID, action: api.AssignmentChange_AssignmentActionRemove}])
-	// }
+	assert.Len(t, resp.Changes, 6)
+	taskChanges, secretChanges = collectTasksAndSecrets(resp.Changes)
+	assert.Empty(t, taskChanges)
+	assert.Len(t, secretChanges, 6)
+	for _, secret := range secrets[3:9] {
+		assert.NotNil(t, secretChanges[idAndAction{id: secret.ID, action: api.AssignmentChange_AssignmentActionUpdate}])
+	}
+
+	// deleting the secrets underneath the task triggers a secret removal change for the tasks >= ASSIGNED and <= RUNNING
+	err = gd.Store.Update(func(tx store.Tx) error {
+		for _, secret := range secrets[:len(secrets)-2] {
+			assert.NoError(t, store.DeleteSecret(tx, secret.ID))
+		}
+		return nil
+	})
+	assert.NoError(t, err)
+
+	resp, err = stream.Recv()
+	assert.NoError(t, err)
+
+	assert.Len(t, resp.Changes, 6)
+	taskChanges, secretChanges = collectTasksAndSecrets(resp.Changes)
+	assert.Empty(t, taskChanges)
+	assert.Len(t, secretChanges, 6)
+	for _, secret := range secrets[3:9] {
+		assert.NotNil(t, secretChanges[idAndAction{id: secret.ID, action: api.AssignmentChange_AssignmentActionRemove}])
+	}
 
 	// deleting the tasks removes all the secrets for every single task, no matter
 	// what state it's in
@@ -550,24 +592,46 @@ func TestAssignmentsAddingTasks(t *testing.T) {
 		assert.NotNil(t, secretChanges[idAndAction{id: secret.ID, action: api.AssignmentChange_AssignmentActionUpdate}])
 	}
 
-	// TODO (cyli): this assumption does not seem to be true
-	// deleting the secrets underneath the task should trigger a secret removal change, at least probably for any tasks
-	// >= ASSIGNED and <= RUNNING
-	// err = gd.Store.Update(func(tx store.Tx) error {
-	// 	for _, secret := range secrets[3 : len(secrets)-5] {
-	// 		assert.NoError(t, store.DeleteSecret(tx, secret.ID))
-	// 	}
-	// 	return nil
-	// })
-	// assert.NoError(t, err)
+	// updating used secrets triggers a secret update change for the tasks >= ASSIGNED and <= RUNNING
+	err = gd.Store.Update(func(tx store.Tx) error {
+		for _, secret := range secrets[:len(secrets)-2] {
+			secret.Spec.Data = []byte("new secret data")
+			assert.NoError(t, store.UpdateSecret(tx, secret))
+		}
+		return nil
+	})
+	assert.NoError(t, err)
 
-	// resp, err = stream.Recv()
-	// assert.NoError(t, err)
+	resp, err = stream.Recv()
+	assert.NoError(t, err)
 
-	// assert.Equal(t, 6, len(resp.Changes))
-	// for _, secret := range secrets[3:9] {
-	// 	assert.NotNil(t, secretChanges[idAndAction{id: secret.ID, action: api.AssignmentChange_AssignmentActionRemove}])
-	// }
+	assert.Len(t, resp.Changes, 6)
+	taskChanges, secretChanges = collectTasksAndSecrets(resp.Changes)
+	assert.Empty(t, taskChanges)
+	assert.Len(t, secretChanges, 6)
+	for _, secret := range secrets[3:9] {
+		assert.NotNil(t, secretChanges[idAndAction{id: secret.ID, action: api.AssignmentChange_AssignmentActionUpdate}])
+	}
+
+	// deleting the secrets underneath the task triggers a secret removal change for the tasks >= ASSIGNED and <= RUNNING
+	err = gd.Store.Update(func(tx store.Tx) error {
+		for _, secret := range secrets[:len(secrets)-2] {
+			assert.NoError(t, store.DeleteSecret(tx, secret.ID))
+		}
+		return nil
+	})
+	assert.NoError(t, err)
+
+	resp, err = stream.Recv()
+	assert.NoError(t, err)
+
+	assert.Len(t, resp.Changes, 6)
+	taskChanges, secretChanges = collectTasksAndSecrets(resp.Changes)
+	assert.Empty(t, taskChanges)
+	assert.Len(t, secretChanges, 6)
+	for _, secret := range secrets[3:9] {
+		assert.NotNil(t, secretChanges[idAndAction{id: secret.ID, action: api.AssignmentChange_AssignmentActionRemove}])
+	}
 
 	// deleting the tasks removes all the secrets for every single task, no matter
 	// what state it's in
@@ -629,17 +693,6 @@ func TestTasksStatusChange(t *testing.T) {
 		ID:           "testTask2",
 		Status:       api.TaskStatus{State: api.TaskStateAssigned},
 		DesiredState: api.TaskStateReady,
-	}
-
-	{
-		// without correct SessionID should fail
-		stream, err := gd.Clients[0].Assignments(context.Background(), &api.AssignmentsRequest{})
-		assert.NoError(t, err)
-		assert.NotNil(t, stream)
-		resp, err := stream.Recv()
-		assert.Nil(t, resp)
-		assert.Error(t, err)
-		assert.Equal(t, grpc.Code(err), codes.InvalidArgument)
 	}
 
 	stream, err := gd.Clients[0].Assignments(context.Background(), &api.AssignmentsRequest{SessionID: expectedSessionID})

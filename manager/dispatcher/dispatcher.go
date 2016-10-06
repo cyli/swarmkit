@@ -957,7 +957,7 @@ func (d *Dispatcher) Assignments(r *api.AssignmentsRequest, stream api.Dispatche
 						if equality.TasksEqualStable(oldTask, v.Task) && v.Task.Status.State > api.TaskStateAssigned {
 							// this update should not trigger a task change for the agent
 							tasksMap[v.Task.ID] = v.Task
-							// If this task go updated to a final state, lets release
+							// If this task got updated to a final state, let's release
 							// the secrets that are being used by the task
 							if v.Task.Status.State > api.TaskStateRunning {
 								// If releasing the secrets caused a secret to be
@@ -1002,7 +1002,7 @@ func (d *Dispatcher) Assignments(r *api.AssignmentsRequest, stream api.Dispatche
 				// TODO(aaronl): For node secrets, we'll need to handle
 				// EventCreateSecret.
 				case state.EventUpdateSecret:
-					if _, exists := tasksUsingSecret[v.Secret.Spec.Annotations.Name]; !exists {
+					if _, exists := tasksUsingSecret[v.Secret.ID]; !exists {
 						continue
 					}
 
@@ -1010,11 +1010,11 @@ func (d *Dispatcher) Assignments(r *api.AssignmentsRequest, stream api.Dispatche
 
 					oneModification()
 				case state.EventDeleteSecret:
-					if _, exists := tasksUsingSecret[v.Secret.Spec.Annotations.Name]; !exists {
+					if _, exists := tasksUsingSecret[v.Secret.ID]; !exists {
 						continue
 					}
 
-					delete(tasksUsingSecret, v.Secret.Spec.Annotations.Name)
+					delete(tasksUsingSecret, v.Secret.ID)
 
 					removeSecrets[v.Secret.ID] = struct{}{}
 
