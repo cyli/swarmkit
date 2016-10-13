@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/coreos/etcd/raft/raftpb"
@@ -17,20 +18,22 @@ import (
 var _ WALFactory = walCryptor{}
 
 // Generates a bunch of WAL test data
-func makeWALData() ([]byte, []raftpb.Entry, walpb.Snapshot) {
-	term := uint64(3)
-	index := uint64(4)
+func makeWALData(index uint64, term uint64) ([]byte, []raftpb.Entry, walpb.Snapshot) {
+	wsn := walpb.Snapshot{
+		Index: index,
+		Term:  term,
+	}
 
 	var entries []raftpb.Entry
-	for i := index + 1; i < index+6; i++ {
+	for i := wsn.Index + 1; i < wsn.Index+6; i++ {
 		entries = append(entries, raftpb.Entry{
-			Term:  term,
+			Term:  wsn.Term + 1,
 			Index: i,
 			Data:  []byte(fmt.Sprintf("Entry %d", i)),
 		})
 	}
 
-	return []byte("metadata"), entries, walpb.Snapshot{Index: index, Term: term}
+	return []byte("metadata"), entries, wsn
 }
 
 func createWithWAL(t *testing.T, w WALFactory, metadata []byte, startSnap walpb.Snapshot, entries []raftpb.Entry) string {
@@ -49,7 +52,7 @@ func createWithWAL(t *testing.T, w WALFactory, metadata []byte, startSnap walpb.
 
 // WAL can read entries are not wrapped, but not encrypted
 func TestReadAllWrappedNoEncryption(t *testing.T) {
-	metadata, entries, snapshot := makeWALData()
+	metadata, entries, snapshot := makeWALData(1, 1)
 	wrappedEntries := make([]raftpb.Entry, len(entries))
 	for i, entry := range entries {
 		r := api.MaybeEncryptedRecord{Data: entry.Data}
@@ -77,7 +80,7 @@ func TestReadAllWrappedNoEncryption(t *testing.T) {
 
 // When reading WAL, if the decrypter can't read the encryption type, errors
 func TestReadAllNoSupportedDecrypter(t *testing.T) {
-	metadata, entries, snapshot := makeWALData()
+	metadata, entries, snapshot := makeWALData(1, 1)
 	for i, entry := range entries {
 		r := api.MaybeEncryptedRecord{Data: entry.Data, Algorithm: api.MaybeEncryptedRecord_Algorithm(-3)}
 		data, err := r.Marshal()
@@ -102,7 +105,7 @@ func TestReadAllNoSupportedDecrypter(t *testing.T) {
 // entry is incorrectly encryptd, an error is returned
 func TestReadAllEntryIncorrectlyEncrypted(t *testing.T) {
 	crypter := &meowCrypter{}
-	metadata, entries, snapshot := makeWALData()
+	metadata, entries, snapshot := makeWALData(1, 1)
 
 	// metadata is correctly encryptd, but entries are not meow-encryptd
 	for i, entry := range entries {
@@ -128,7 +131,7 @@ func TestReadAllEntryIncorrectlyEncrypted(t *testing.T) {
 // The entry data and metadata are encryptd with the given encrypter, and a regular
 // WAL will see them as such.
 func TestSave(t *testing.T) {
-	metadata, entries, snapshot := makeWALData()
+	metadata, entries, snapshot := makeWALData(1, 1)
 
 	crypter := &meowCrypter{}
 	c := NewWALFactory(crypter, encryption.NoopCrypter)
@@ -154,7 +157,7 @@ func TestSave(t *testing.T) {
 
 // If encryption fails, saving will fail
 func TestSaveEncryptionFails(t *testing.T) {
-	metadata, entries, snapshot := makeWALData()
+	metadata, entries, snapshot := makeWALData(1, 1)
 
 	tempdir, err := ioutil.TempDir("", "waltests")
 	require.NoError(t, err)
@@ -162,7 +165,7 @@ func TestSaveEncryptionFails(t *testing.T) {
 
 	// fail encrypting one of the entries, but not the first one
 	c := NewWALFactory(&meowCrypter{encryptFailures: map[string]struct{}{
-		"Entry 7": {},
+		"Entry 3": {},
 	}}, nil)
 	wrapped, err := c.Create(tempdir, metadata)
 	require.NoError(t, err)
@@ -198,7 +201,7 @@ func TestCreateOpenInvalidDirFails(t *testing.T) {
 // A WAL can read what it wrote so long as it has a corresponding decrypter
 func TestSaveAndRead(t *testing.T) {
 	crypter := &meowCrypter{}
-	metadata, entries, snapshot := makeWALData()
+	metadata, entries, snapshot := makeWALData(1, 1)
 
 	c := NewWALFactory(crypter, crypter)
 	tempdir := createWithWAL(t, c, metadata, snapshot, entries)
@@ -212,4 +215,80 @@ func TestSaveAndRead(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, metadata, meta)
 	require.Equal(t, entries, ents)
+}
+
+func TestReadRepairWAL(t *testing.T) {
+	metadata, entries, snapshot := makeWALData(1, 1)
+	tempdir := createWithWAL(t, OriginalWAL, metadata, snapshot, entries)
+	defer os.RemoveAll(tempdir)
+
+	// there should only be one WAL file in there - corrupt it
+	files, err := ioutil.ReadDir(tempdir)
+	require.NoError(t, err)
+	require.Len(t, files, 1)
+
+	fName := filepath.Join(tempdir, files[0].Name())
+	fileContents, err := ioutil.ReadFile(fName)
+	require.NoError(t, err)
+	require.NoError(t, ioutil.WriteFile(fName, fileContents[:200], files[0].Mode()))
+
+	ogWAL, err := OriginalWAL.Open(tempdir, snapshot)
+	require.NoError(t, err)
+	_, _, _, err = ogWAL.ReadAll()
+	require.Error(t, err)
+	require.NoError(t, ogWAL.Close())
+
+	ogWAL, meta, _, _, err := ReadRepairWAL(tempdir, snapshot, OriginalWAL, nil)
+	require.NoError(t, err)
+	require.Equal(t, metadata, meta)
+	require.NoError(t, ogWAL.Close())
+}
+
+func TestMigrateWALs(t *testing.T) {
+	metadata, entries, snapshot := makeWALData(1, 1)
+	coder := &meowCrypter{}
+	c := NewWALFactory(coder, coder)
+
+	var (
+		err  error
+		dirs = make([]string, 2)
+	)
+	for i := 0; i < 2; i++ {
+		dirs[i], err = ioutil.TempDir("", "test-migrate")
+		require.NoError(t, err)
+		defer os.RemoveAll(dirs[i])
+	}
+
+	origDir := createWithWAL(t, OriginalWAL, metadata, snapshot, entries)
+	defer os.RemoveAll(origDir)
+
+	// original to new
+	oldDir := origDir
+	newDir := dirs[0]
+
+	err = MigrateWALs(oldDir, newDir, OriginalWAL, c, snapshot, nil)
+	require.NoError(t, err)
+
+	newWAL, err := c.Open(newDir, snapshot)
+	require.NoError(t, err)
+	meta, _, ents, err := newWAL.ReadAll()
+	require.NoError(t, err)
+	require.Equal(t, metadata, meta)
+	require.Equal(t, entries, ents)
+	require.NoError(t, newWAL.Close())
+
+	// new to original
+	oldDir = dirs[0]
+	newDir = dirs[1]
+
+	err = MigrateWALs(oldDir, newDir, c, OriginalWAL, snapshot, nil)
+	require.NoError(t, err)
+
+	newWAL, err = OriginalWAL.Open(newDir, snapshot)
+	require.NoError(t, err)
+	meta, _, ents, err = newWAL.ReadAll()
+	require.NoError(t, err)
+	require.Equal(t, metadata, meta)
+	require.Equal(t, entries, ents)
+	require.NoError(t, newWAL.Close())
 }
