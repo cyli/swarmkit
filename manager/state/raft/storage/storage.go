@@ -51,8 +51,8 @@ func (e *EncryptedRaftLogger) BootstrapFromDisk(ctx context.Context) (*RaftDataF
 	walDir := e.walDir()
 	snapDir := e.snapDir()
 
-	encoder, decoder := encryption.Defaults(e.EncryptionKey)
-	snapFactory := NewSnapFactory(encoder, decoder)
+	encrypter, decrypter := encryption.Defaults(e.EncryptionKey)
+	snapFactory := NewSnapFactory(encrypter, decrypter)
 
 	if !fileutil.Exist(snapDir) {
 		// If snapshots created by the etcd-v2 code exist, read the latest snapshot
@@ -83,7 +83,7 @@ func (e *EncryptedRaftLogger) BootstrapFromDisk(ctx context.Context) (*RaftDataF
 		return nil, err
 	}
 
-	walFactory := NewWALFactory(encoder, decoder)
+	walFactory := NewWALFactory(encrypter, decrypter)
 	var walsnap walpb.Snapshot
 	if result.Snapshot != nil {
 		walsnap.Index = result.Snapshot.Metadata.Index
@@ -119,8 +119,8 @@ func (e *EncryptedRaftLogger) BootstrapFromDisk(ctx context.Context) (*RaftDataF
 func (e *EncryptedRaftLogger) BootstrapNew(raftNode *api.RaftMember) ([]byte, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	encoder, decoder := encryption.Defaults(e.EncryptionKey)
-	walFactory := NewWALFactory(encoder, decoder)
+	encrypter, decrypter := encryption.Defaults(e.EncryptionKey)
+	walFactory := NewWALFactory(encrypter, decrypter)
 
 	for _, dirpath := range []string{e.walDir(), e.snapDir()} {
 		if err := os.MkdirAll(dirpath, 0700); err != nil {
@@ -137,7 +137,7 @@ func (e *EncryptedRaftLogger) BootstrapNew(raftNode *api.RaftMember) ([]byte, er
 		return nil, errors.Wrap(err, "failed to create WAL")
 	}
 
-	e.snapshotter = NewSnapFactory(encoder, decoder).New(e.snapDir())
+	e.snapshotter = NewSnapFactory(encrypter, decrypter).New(e.snapDir())
 	return metadata, nil
 }
 
@@ -158,7 +158,7 @@ func (e *EncryptedRaftLogger) snapDir() string {
 }
 
 // SaveSnapshot actually saves a given snapshot - if a new key is provided.  If a new key is provided, the key
-// is actually rotated - otherwise we always try to set the encoders to our current encryption key
+// is actually rotated - otherwise we always try to set the encrypters to our current encryption key
 func (e *EncryptedRaftLogger) SaveSnapshot(snapshot raftpb.Snapshot, newKey []byte) error {
 	err := func() error {
 		// we want a write lock instead so we can rotate the encryption key and
@@ -177,7 +177,7 @@ func (e *EncryptedRaftLogger) SaveSnapshot(snapshot raftpb.Snapshot, newKey []by
 		}
 
 		if newKey == nil {
-			// never mind with rotating the encoders - just save the WAL snapshot
+			// never mind with rotating the encrypters - just save the WAL snapshot
 			return e.wal.SaveSnapshot(walsnap)
 		}
 
@@ -186,7 +186,7 @@ func (e *EncryptedRaftLogger) SaveSnapshot(snapshot raftpb.Snapshot, newKey []by
 		reset := func() {}
 		if ok {
 			// we don't want to have to close the WAL and bootstrap a new one,
-			// so just rotate the encoders out from under it.  We already
+			// so just rotate the encrypters out from under it.  We already
 			// have a lock on writing to snapshots and WALs
 			oldEncrypter := wrapped.encrypter
 			oldDecrypter := wrapped.decrypter

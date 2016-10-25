@@ -185,20 +185,20 @@ func TestMigrateWAL(t *testing.T) {
 	require.NoError(t, err)
 	logger.Close(context.Background())
 
-	encoder, decoders := encryption.Defaults([]byte("key"))
+	encrypter, decrypters := encryption.Defaults([]byte("key"))
 
 	// Move and re-encode the WAL and snap directory so it looks like it was created by an old version
 	walDir := filepath.Join(tempdir, "wal-v3")
 	snapDir := filepath.Join(tempdir, "snap-v3")
 	require.NoError(t, MigrateWALs(
 		walDir, filepath.Join(tempdir, "wal"),
-		NewWALFactory(encoder, decoders), OriginalWAL,
+		NewWALFactory(encrypter, decrypters), OriginalWAL,
 		walpb.Snapshot{Index: snapshot.Metadata.Index, Term: snapshot.Metadata.Term},
 		nil,
 	))
 	require.NoError(t, MigrateSnapshot(
 		snapDir, filepath.Join(tempdir, "snap"),
-		NewSnapFactory(encoder, decoders), OriginalSnap,
+		NewSnapFactory(encrypter, decrypters), OriginalSnap,
 	))
 	require.NoError(t, os.RemoveAll(walDir))
 	require.NoError(t, os.RemoveAll(snapDir))
