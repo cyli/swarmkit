@@ -337,6 +337,7 @@ func (m *Manager) Run(parent context.Context) error {
 	// information to put in the metadata map).
 	forwardAsOwnRequest := func(ctx context.Context) (context.Context, error) { return ctx, nil }
 	localProxyControlAPI := api.NewRaftProxyControlServer(baseControlAPI, m.raftNode, forwardAsOwnRequest)
+	localNodeCAAPI := api.NewRaftProxyNodeCAServer(m.caserver, m.raftNode, forwardAsOwnRequest)
 
 	// Everything registered on m.server should be an authenticated
 	// wrapper, or a proxy wrapping an authenticated wrapper!
@@ -351,6 +352,7 @@ func (m *Manager) Run(parent context.Context) error {
 
 	api.RegisterControlServer(m.localserver, localProxyControlAPI)
 	api.RegisterHealthServer(m.localserver, localHealthServer)
+	api.RegisterNodeCAServer(m.localserver, localNodeCAAPI)
 
 	healthServer.SetServingStatus("Raft", api.HealthCheckResponse_NOT_SERVING)
 	localHealthServer.SetServingStatus("ControlAPI", api.HealthCheckResponse_NOT_SERVING)
