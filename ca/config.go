@@ -366,6 +366,7 @@ func RenewTLSConfigNow(ctx context.Context, s *SecurityConfig, r remotes.Remotes
 		if updates != nil {
 			updates <- CertificateUpdate{Err: err}
 		}
+		return err
 	}
 	serverTLSConfig, err := NewServerTLSConfig(tlsKeyPair, rootCA.Pool)
 	if err != nil {
@@ -373,14 +374,15 @@ func RenewTLSConfigNow(ctx context.Context, s *SecurityConfig, r remotes.Remotes
 		if updates != nil {
 			updates <- CertificateUpdate{Err: err}
 		}
+		return err
 	}
 
-	err = s.ClientTLSCreds.LoadNewTLSConfig(clientTLSConfig)
-	if err != nil {
+	if err = s.ClientTLSCreds.LoadNewTLSConfig(clientTLSConfig); err != nil {
 		log.WithError(err).Errorf("failed to update the client credentials")
 		if updates != nil {
 			updates <- CertificateUpdate{Err: err}
 		}
+		return err
 	}
 
 	// Update the external CA to use the new client TLS
@@ -391,12 +393,12 @@ func RenewTLSConfigNow(ctx context.Context, s *SecurityConfig, r remotes.Remotes
 		MinVersion:   tls.VersionTLS12,
 	})
 
-	err = s.ServerTLSCreds.LoadNewTLSConfig(serverTLSConfig)
-	if err != nil {
+	if err = s.ServerTLSCreds.LoadNewTLSConfig(serverTLSConfig); err != nil {
 		log.WithError(err).Errorf("failed to update the server TLS credentials")
 		if updates != nil {
 			updates <- CertificateUpdate{Err: err}
 		}
+		return err
 	}
 
 	if updates != nil {

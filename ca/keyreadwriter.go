@@ -36,7 +36,7 @@ type KeyReader interface {
 type KeyWriter interface {
 	Write([]byte, []byte, *KEKUpdate) error
 	UpdateHeaders(cb func(map[string]string, []byte) error) error
-	RotateKEK(newKek []byte) error
+	RotateKEK(newKEK []byte) error
 }
 
 // KEKUpdate provides an optional update to the kek when writing.  The structure
@@ -92,7 +92,7 @@ func (k *KeyReadWriter) ReadHeaders() (map[string]string, []byte, error) {
 }
 
 // RotateKEK re-encrypts the key with a new KEK
-func (k *KeyReadWriter) RotateKEK(newKek []byte) error {
+func (k *KeyReadWriter) RotateKEK(newKEK []byte) error {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 
@@ -102,16 +102,16 @@ func (k *KeyReadWriter) RotateKEK(newKek []byte) error {
 	}
 
 	if k.headerUpdater != nil {
-		if err := k.headerUpdater(keyBlock.Headers, k.kek, newKek); err != nil {
+		if err := k.headerUpdater(keyBlock.Headers, k.kek, newKEK); err != nil {
 			return err
 		}
 	}
 
-	if err := k.writeKey(keyBlock, newKek); err != nil {
+	if err := k.writeKey(keyBlock, newKEK); err != nil {
 		return err
 	}
 
-	k.kek = newKek
+	k.kek = newKEK
 	return nil
 }
 

@@ -199,10 +199,10 @@ func TestMaintainEncryptedPEMHeaders(t *testing.T) {
 	require.Empty(t, headers)
 
 	// if there is a pending header, it gets re-encrypted even if there is no DEK
-	headers = map[string]string{defaultRaftDekKeyPending: sampleHeaderValueUnencrypted}
+	headers = map[string]string{defaultRaftDEKKeyPending: sampleHeaderValueUnencrypted}
 	require.NoError(t, MaintainEncryptedPEMHeaders(headers, nil, []byte("new KEK")))
 	require.Len(t, headers, 1)
-	decoded, err := decodePEMHeaderValue(headers[defaultRaftDekKeyPending], []byte("new KEK"))
+	decoded, err := decodePEMHeaderValue(headers[defaultRaftDEKKeyPending], []byte("new KEK"))
 	require.NoError(t, err)
 	require.Equal(t, []byte("DEK"), decoded)
 
@@ -221,18 +221,18 @@ func TestMaintainEncryptedPEMHeaders(t *testing.T) {
 	decoded, err = decodePEMHeaderValue(headers[defaultRaftDEKKey], []byte("new KEK"))
 	require.NoError(t, err)
 	require.Equal(t, []byte("DEK"), decoded)
-	decoded, err = decodePEMHeaderValue(headers[defaultRaftDekKeyPending], []byte("new KEK"))
+	decoded, err = decodePEMHeaderValue(headers[defaultRaftDEKKeyPending], []byte("new KEK"))
 	require.NoError(t, err)
 	require.NotEqual(t, []byte("DEK"), decoded) // randomly generated
 
 	// both headers get re-encrypted, if both are present, and no new key is created
 	headers = map[string]string{
 		defaultRaftDEKKey:        sampleHeaderValueUnencrypted,
-		defaultRaftDekKeyPending: sampleHeaderValueUnencrypted,
+		defaultRaftDEKKeyPending: sampleHeaderValueUnencrypted,
 	}
 	require.NoError(t, MaintainEncryptedPEMHeaders(headers, nil, []byte("new KEK")))
 	require.Len(t, headers, 2)
-	decoded, err = decodePEMHeaderValue(headers[defaultRaftDekKeyPending], []byte("new KEK"))
+	decoded, err = decodePEMHeaderValue(headers[defaultRaftDEKKeyPending], []byte("new KEK"))
 	require.NoError(t, err)
 	require.Equal(t, []byte("DEK"), decoded)
 	decoded, err = decodePEMHeaderValue(headers[defaultRaftDEKKey], []byte("new KEK"))
@@ -242,7 +242,7 @@ func TestMaintainEncryptedPEMHeaders(t *testing.T) {
 	// if we can't decrypt either one, fail
 	headers = map[string]string{
 		defaultRaftDEKKey:        sampleHeaderValueUnencrypted,
-		defaultRaftDekKeyPending: sampleHeaderValueEncrypted,
+		defaultRaftDEKKeyPending: sampleHeaderValueEncrypted,
 	}
 	require.Error(t, MaintainEncryptedPEMHeaders(headers, nil, []byte("original KEK")))
 
@@ -319,7 +319,7 @@ func TestManagerLockUnlock(t *testing.T) {
 		}
 		cluster = resp.Clusters[0]
 		return nil
-	}, 800*time.Millisecond))
+	}, 1*time.Second))
 
 	require.Nil(t, cluster.Spec.EncryptionConfig.ManagerUnlockKey)
 
@@ -356,7 +356,7 @@ func TestManagerLockUnlock(t *testing.T) {
 		}
 
 		return nil
-	}, 500*time.Millisecond))
+	}, 1*time.Second))
 
 	// the new key should be encrypted, and a DEK rotation should have kicked off
 	keyBlock, _ = pem.Decode(updatedKey)
@@ -376,7 +376,7 @@ func TestManagerLockUnlock(t *testing.T) {
 		stillCurrentDEK, err := decodePEMHeaderValue(keyBlock.Headers[defaultRaftDEKKey], []byte("kek"))
 		require.NoError(t, err)
 		require.Equal(t, currentDEK, stillCurrentDEK)
-		pendingDEK, err := decodePEMHeaderValue(keyBlock.Headers[defaultRaftDekKeyPending], []byte("kek"))
+		pendingDEK, err := decodePEMHeaderValue(keyBlock.Headers[defaultRaftDEKKeyPending], []byte("kek"))
 		require.NoError(t, err)
 		require.NotEqual(t, currentDEK, pendingDEK)
 	}
@@ -397,7 +397,7 @@ func TestManagerLockUnlock(t *testing.T) {
 		}
 
 		return nil
-	}, 500*time.Millisecond))
+	}, 1*time.Second))
 
 	nowCurrentDEK, err := decodePEMHeaderValue(keyBlock.Headers[defaultRaftDEKKey], []byte("kek"))
 	require.NoError(t, err)
@@ -432,7 +432,7 @@ func TestManagerLockUnlock(t *testing.T) {
 		}
 
 		return nil
-	}, 500*time.Millisecond))
+	}, 1*time.Second))
 
 	// the new key should not be encrypted, and the DEK should also be unencrypted
 	// but not rotated

@@ -1,8 +1,8 @@
 package manager
 
 import (
-	"bytes"
 	"crypto/rand"
+	"crypto/subtle"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
@@ -46,10 +46,10 @@ import (
 const (
 	// defaultTaskHistoryRetentionLimit is the number of tasks to keep.
 	defaultTaskHistoryRetentionLimit = 5
-	// the raft DEK (data encryption key) is stored in the TLS cert as a header
+	// the raft DEK (data encryption key) is stored in the TLS key as a header
 	// these are the header values
 	defaultRaftDEKKey        = "raft-dek"
-	defaultRaftDekKeyPending = "raft-dek-pending"
+	defaultRaftDEKKeyPending = "raft-dek-pending"
 )
 
 // RemoteAddrs provides an listening address and an optional advertise address
@@ -383,10 +383,10 @@ func (m *Manager) Run(parent context.Context) error {
 			if err == raft.ErrMemberRemoved {
 				if err := m.config.SecurityConfig.KeyWriter().UpdateHeaders(func(headers map[string]string, _ []byte) error {
 					delete(headers, defaultRaftDEKKey)
-					delete(headers, defaultRaftDekKeyPending)
+					delete(headers, defaultRaftDEKKeyPending)
 					return nil
 				}); err != nil {
-					log.G(ctx).Error(errors.Wrap(err, "unable to remove raft DEK from TLS certificate"))
+					log.G(ctx).Error(errors.Wrap(err, "unable to remove raft DEK from TLS key"))
 				}
 			}
 		}
@@ -505,15 +505,15 @@ func (m *Manager) joinAndStart(ctx context.Context) error {
 		// if there is no DEK, create a new one
 		dekStr, foundDEK := headers[defaultRaftDEKKey]
 		if !foundDEK {
-			newDek := make([]byte, 32)
-			_, err := rand.Read(newDek)
+			newDEK := make([]byte, 32)
+			_, err := rand.Read(newDEK)
 			if err != nil {
 				return err
 			}
-			if headers[defaultRaftDEKKey], err = encodePEMHeaderValue(newDek, kek); err != nil {
+			if headers[defaultRaftDEKKey], err = encodePEMHeaderValue(newDEK, kek); err != nil {
 				return err
 			}
-			return m.raftNode.JoinAndStart(ctx, newDek)
+			return m.raftNode.JoinAndStart(ctx, newDEK)
 		}
 
 		if pendingKey := m.keyRotator.GetNewKey(); pendingKey != nil {
@@ -549,8 +549,14 @@ func (m *Manager) watchForKEKChanges(ctx context.Context) {
 		state.EventUpdateCluster{},
 	)
 	securityConfig := m.config.SecurityConfig
+	nodeID := m.config.SecurityConfig.ClientTLSCreds.NodeID()
+	logger := log.G(ctx).WithFields(logrus.Fields{
+		"node.id":   nodeID,
+		"node.role": ca.ManagerRole,
+	})
+
 	// we are our own peer from which we get certs - try to connect over the local socket
-	r := remotes.NewRemotes(api.Peer{Addr: m.Addr(), NodeID: securityConfig.ClientTLSCreds.NodeID()})
+	r := remotes.NewRemotes(api.Peer{Addr: m.Addr(), NodeID: nodeID})
 	defer clusterWatchCancel()
 	for {
 		select {
@@ -558,24 +564,21 @@ func (m *Manager) watchForKEKChanges(ctx context.Context) {
 			clusterEvent := event.(state.EventUpdateCluster)
 			kek := clusterEvent.Cluster.Spec.EncryptionConfig.ManagerUnlockKey
 			switch {
-			case bytes.Equal(kek, m.keyRotator.GetCurrentKEK()):
+			case subtle.ConstantTimeCompare(kek, m.keyRotator.GetCurrentKEK()) == 1:
 				// if the KEK hasn't changed, do nothing
-				break
+				continue
 			case m.keyRotator.GetCurrentKEK() == nil:
 				// it was previously unencrypted, and now needs to be encrypted - trigger
 				// a full rotation of the TLS keys too
 				if err := ca.RenewTLSConfigNow(ctx, securityConfig, r, nil); err != nil {
-					// try again
-					clusterWatch <- clusterEvent
-					break
+					continue
 				}
 				// Now that we have a new TLS certificate, let's load it from disk and
 				// update our key rotator
 				headers, _, err := securityConfig.KeyReader().ReadHeaders()
 				if err != nil {
-					// try again
-					clusterWatch <- clusterEvent
-					break
+					logger.WithError(err).Errorf("failed to read refreshed TLS key from disk")
+					continue
 				}
 				m.keyRotator.LoadFromHeaders(headers, kek)
 				// trigger a raft DEK rotation
@@ -583,8 +586,8 @@ func (m *Manager) watchForKEKChanges(ctx context.Context) {
 			default:
 				// the kek has just changed - all we just to do is re-encrypt the DEK and the cert
 				if err := securityConfig.KeyWriter().RotateKEK(kek); err != nil {
-					// try again
-					clusterWatch <- clusterEvent
+					logger.WithError(err).Errorf("failed to re-encrypt TLS key")
+					continue
 				}
 			}
 		case <-ctx.Done():
@@ -955,7 +958,7 @@ func (r *raftDEKRotator) RotationNotify() chan struct{} {
 func (r *raftDEKRotator) FinishKeyRotation(key []byte) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if bytes.Equal(key, r.nextDEK) {
+	if subtle.ConstantTimeCompare(key, r.nextDEK) == 1 {
 		r.nextDEK = nil
 	}
 	if r.kw != nil {
@@ -968,16 +971,16 @@ func (r *raftDEKRotator) FinishKeyRotation(key []byte) error {
 			}
 			headers[defaultRaftDEKKey] = headerStr
 
-			if pendingDEKStr, ok := headers[defaultRaftDekKeyPending]; ok {
+			if pendingDEKStr, ok := headers[defaultRaftDEKKeyPending]; ok {
 				pendingKey, err := decodePEMHeaderValue(pendingDEKStr, kek)
 				if err != nil {
 					return err
 				}
-				// that's weird, but ok - I guess rotate again
-				if !bytes.Equal(key, pendingKey) {
+				// another queued rotation
+				if subtle.ConstantTimeCompare(key, pendingKey) == 0 {
 					r.nextDEK = pendingKey
 				} else {
-					delete(headers, defaultRaftDekKeyPending)
+					delete(headers, defaultRaftDEKKeyPending)
 				}
 			}
 			return nil
@@ -991,7 +994,7 @@ func (r *raftDEKRotator) LoadFromHeaders(headers map[string]string, kek []byte) 
 	defer r.mu.Unlock()
 
 	_, foundDEK := headers[defaultRaftDEKKey]
-	pendingDEKStr, foundPendingDEK := headers[defaultRaftDekKeyPending]
+	pendingDEKStr, foundPendingDEK := headers[defaultRaftDEKKeyPending]
 	if !foundDEK {
 		if foundPendingDEK {
 			return fmt.Errorf("there is a pending DEK but no current DEK")
@@ -1035,7 +1038,7 @@ func encodePEMHeaderValue(headerValue []byte, kek []byte) (string, error) {
 // MaintainEncryptedPEMHeaders takes a set of PEM headers, and ensures that the manager raft DEK pem headers
 // are always encrypted correctly.
 func MaintainEncryptedPEMHeaders(headers map[string]string, oldKEK, newKEK []byte) error {
-	if bytes.Equal(oldKEK, newKEK) {
+	if subtle.ConstantTimeCompare(oldKEK, newKEK) == 1 {
 		// don't bother re-encrypting anything if the keys have not changed
 		return nil
 	}
@@ -1053,7 +1056,7 @@ func MaintainEncryptedPEMHeaders(headers map[string]string, oldKEK, newKEK []byt
 		}
 	}
 
-	pendingDEKStr, foundPendingDEK := headers[defaultRaftDekKeyPending]
+	pendingDEKStr, foundPendingDEK := headers[defaultRaftDEKKeyPending]
 
 	switch {
 	case foundPendingDEK:
@@ -1062,18 +1065,18 @@ func MaintainEncryptedPEMHeaders(headers map[string]string, oldKEK, newKEK []byt
 		if err != nil {
 			return err
 		}
-		if headers[defaultRaftDekKeyPending], err = encodePEMHeaderValue(decodedValue, newKEK); err != nil {
+		if headers[defaultRaftDEKKeyPending], err = encodePEMHeaderValue(decodedValue, newKEK); err != nil {
 			return err
 		}
 
 	case foundDEK && oldKEK == nil:
 		// if there is a DEK, it should be rotated since the DEK was previously not encrypted with a KEK
-		newDek := make([]byte, 32)
-		_, err := rand.Read(newDek)
+		newDEK := make([]byte, 32)
+		_, err := rand.Read(newDEK)
 		if err != nil {
 			return err
 		}
-		if headers[defaultRaftDekKeyPending], err = encodePEMHeaderValue(newDek, newKEK); err != nil {
+		if headers[defaultRaftDEKKeyPending], err = encodePEMHeaderValue(newDEK, newKEK); err != nil {
 			return err
 		}
 	}

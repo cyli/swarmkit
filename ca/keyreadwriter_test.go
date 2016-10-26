@@ -119,15 +119,15 @@ func TestKeyReadWriterWithKeyHeaderUpdater(t *testing.T) {
 
 	// writing new headers is called with existing headers, and will write a key that has the headers
 	// returned by the header update function
-	k = ca.NewKeyReadWriter(path.Node, []byte("oldKek"), func(headers map[string]string, oldKek []byte, newKek []byte) error {
+	k = ca.NewKeyReadWriter(path.Node, []byte("oldKEK"), func(headers map[string]string, oldKEK []byte, newKEK []byte) error {
 		require.Equal(t, headers, map[string]string{"hello": "world"})
-		require.Equal(t, []byte("oldKek"), oldKek)
-		require.Equal(t, []byte("newKek"), newKek)
+		require.Equal(t, []byte("oldKEK"), oldKEK)
+		require.Equal(t, []byte("newKEK"), newKEK)
 		delete(headers, "hello")
 		headers["updated"] = "headers"
 		return nil
 	})
-	require.NoError(t, k.Write(cert, key, &ca.KEKUpdate{KEK: []byte("newKek")}))
+	require.NoError(t, k.Write(cert, key, &ca.KEKUpdate{KEK: []byte("newKEK")}))
 
 	// make sure headers were correctly set
 	_, readKey, err := k.Read()
@@ -204,22 +204,22 @@ func TestKeyReadWriterRotateKEK(t *testing.T) {
 
 	// writing new headers is called with existing headers, and will write a key that has the headers
 	// returned by the header update function
-	k = ca.NewKeyReadWriter(path.Node, []byte("oldKek"), func(headers map[string]string, oldKek []byte, newKek []byte) error {
+	k = ca.NewKeyReadWriter(path.Node, []byte("oldKEK"), func(headers map[string]string, oldKEK []byte, newKEK []byte) error {
 		require.Equal(t, headers, map[string]string{"hello": "world"})
-		require.Equal(t, []byte("oldKek"), oldKek)
-		require.Equal(t, []byte("newKek"), newKek)
+		require.Equal(t, []byte("oldKEK"), oldKEK)
+		require.Equal(t, []byte("newKEK"), newKEK)
 		delete(headers, "hello")
 		headers["updated"] = "headers"
 		return nil
 	})
-	require.NoError(t, k.RotateKEK([]byte("newKek")))
+	require.NoError(t, k.RotateKEK([]byte("newKEK")))
 
 	// ensure the key has been re-encrypted and we can read it
 	k = ca.NewKeyReadWriter(path.Node, nil, nil)
 	_, _, err = k.Read()
 	require.Error(t, err)
 
-	k = ca.NewKeyReadWriter(path.Node, []byte("newKek"), nil)
+	k = ca.NewKeyReadWriter(path.Node, []byte("newKEK"), nil)
 	_, readKey, err := k.Read()
 	require.NoError(t, err)
 	keyBlock.Headers = map[string]string{"updated": "headers"}

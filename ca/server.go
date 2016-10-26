@@ -99,7 +99,6 @@ func (s *Server) NodeCertificateStatus(ctx context.Context, request *api.NodeCer
 	defer s.doneTask()
 
 	var node *api.Node
-	var cluster *api.Cluster
 
 	event := state.EventUpdateNode{
 		Node:   &api.Node{ID: request.NodeID},
@@ -111,7 +110,6 @@ func (s *Server) NodeCertificateStatus(ctx context.Context, request *api.NodeCer
 		s.store,
 		func(tx store.ReadTx) error {
 			node = store.GetNode(tx, request.NodeID)
-			cluster = store.GetCluster(tx, s.securityConfig.ClientTLSCreds.Organization())
 			return nil
 		},
 		event,

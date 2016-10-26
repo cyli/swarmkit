@@ -372,8 +372,6 @@ func TestGetEncryptionConfig(t *testing.T) {
 			return store.UpdateCluster(tx, clusters[0])
 		}))
 
-		time.Sleep(500 * time.Millisecond)
-
 		resp, err = tc.NodeCAClients[0].GetEncryptionConfig(context.Background(), &api.GetEncryptionConfigRequest{})
 		assert.NoError(t, err)
 		assert.NotNil(t, resp.EncryptionConfig)
