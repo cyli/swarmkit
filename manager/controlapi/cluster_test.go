@@ -9,6 +9,7 @@ import (
 	"github.com/docker/swarmkit/manager/state/store"
 	"github.com/docker/swarmkit/protobuf/ptypes"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -304,6 +305,130 @@ func TestUpdateClusterRotateToken(t *testing.T) {
 	assert.Len(t, r.Clusters, 1)
 	assert.NotEqual(t, workerToken, r.Clusters[0].RootCA.JoinTokens.Worker)
 	assert.NotEqual(t, managerToken, r.Clusters[0].RootCA.JoinTokens.Manager)
+}
+
+func TestUpdateClusterRotateUnlockKey(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Stop()
+	cluster := createCluster(t, ts, "name", "name", api.AcceptancePolicy{}, ts.Server.rootCA)
+
+	r, err := ts.Client.ListClusters(context.Background(), &api.ListClustersRequest{
+		Filters: &api.ListClustersRequest_Filters{
+			NamePrefixes: []string{"name"},
+		},
+	})
+
+	require.NoError(t, err)
+	require.Len(t, r.Clusters, 1)
+	require.False(t, r.Clusters[0].Spec.EncryptionConfig.AutoLockManagers)
+	require.Equal(t, api.UnlockKeys{}, r.Clusters[0].UnlockKeys) // redacted
+
+	// Rotate unlock key without turning auto-lock on - key should still be nil
+	_, err = ts.Client.UpdateCluster(context.Background(), &api.UpdateClusterRequest{
+		ClusterID:      cluster.ID,
+		Spec:           &cluster.Spec,
+		ClusterVersion: &r.Clusters[0].Meta.Version,
+		UnlockRotation: api.UnlockKeyRotation{
+			RotateManagerKey: true,
+		},
+	})
+	require.NoError(t, err)
+
+	r, err = ts.Client.ListClusters(context.Background(), &api.ListClustersRequest{
+		Filters: &api.ListClustersRequest_Filters{
+			NamePrefixes: []string{"name"},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, r.Clusters, 1)
+	require.False(t, r.Clusters[0].Spec.EncryptionConfig.AutoLockManagers)
+	require.Equal(t, api.UnlockKeys{}, r.Clusters[0].UnlockKeys) // redacted
+
+	// we have to get the key from the memory store, since the cluster returned by the API is redacted
+	ts.Store.View(func(tx store.ReadTx) {
+		cluster := store.GetCluster(tx, r.Clusters[0].ID)
+		require.Nil(t, cluster.UnlockKeys.Manager)
+	})
+
+	// Enable auto-lock only, no rotation boolean
+	spec := cluster.Spec.Copy()
+	spec.EncryptionConfig.AutoLockManagers = true
+	_, err = ts.Client.UpdateCluster(context.Background(), &api.UpdateClusterRequest{
+		ClusterID:      cluster.ID,
+		Spec:           spec,
+		ClusterVersion: &r.Clusters[0].Meta.Version,
+	})
+	require.NoError(t, err)
+
+	r, err = ts.Client.ListClusters(context.Background(), &api.ListClustersRequest{
+		Filters: &api.ListClustersRequest_Filters{
+			NamePrefixes: []string{"name"},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, r.Clusters, 1)
+	require.True(t, r.Clusters[0].Spec.EncryptionConfig.AutoLockManagers)
+	require.Equal(t, api.UnlockKeys{}, r.Clusters[0].UnlockKeys) // redacted
+
+	var managerKey []byte
+	ts.Store.View(func(tx store.ReadTx) {
+		cluster := store.GetCluster(tx, r.Clusters[0].ID)
+		require.NotNil(t, cluster.UnlockKeys.Manager)
+		managerKey = cluster.UnlockKeys.Manager
+	})
+
+	// Rotate the manager key
+	_, err = ts.Client.UpdateCluster(context.Background(), &api.UpdateClusterRequest{
+		ClusterID:      cluster.ID,
+		Spec:           spec,
+		ClusterVersion: &r.Clusters[0].Meta.Version,
+		UnlockRotation: api.UnlockKeyRotation{
+			RotateManagerKey: true,
+		},
+	})
+	require.NoError(t, err)
+
+	r, err = ts.Client.ListClusters(context.Background(), &api.ListClustersRequest{
+		Filters: &api.ListClustersRequest_Filters{
+			NamePrefixes: []string{"name"},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, r.Clusters, 1)
+	require.True(t, r.Clusters[0].Spec.EncryptionConfig.AutoLockManagers)
+	require.Equal(t, api.UnlockKeys{}, r.Clusters[0].UnlockKeys) // redacted
+
+	ts.Store.View(func(tx store.ReadTx) {
+		cluster := store.GetCluster(tx, r.Clusters[0].ID)
+		require.NotNil(t, cluster.UnlockKeys.Manager)
+		require.NotEqual(t, managerKey, cluster.UnlockKeys.Manager) // key has changed
+	})
+
+	// Disable auto lock
+	_, err = ts.Client.UpdateCluster(context.Background(), &api.UpdateClusterRequest{
+		ClusterID:      cluster.ID,
+		Spec:           &cluster.Spec, // set back to original spec
+		ClusterVersion: &r.Clusters[0].Meta.Version,
+		UnlockRotation: api.UnlockKeyRotation{
+			RotateManagerKey: true, // this will be ignored because we disable the auto-lock
+		},
+	})
+	require.NoError(t, err)
+
+	r, err = ts.Client.ListClusters(context.Background(), &api.ListClustersRequest{
+		Filters: &api.ListClustersRequest_Filters{
+			NamePrefixes: []string{"name"},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, r.Clusters, 1)
+	require.False(t, r.Clusters[0].Spec.EncryptionConfig.AutoLockManagers)
+	require.Equal(t, api.UnlockKeys{}, r.Clusters[0].UnlockKeys) // redacted
+
+	ts.Store.View(func(tx store.ReadTx) {
+		cluster := store.GetCluster(tx, r.Clusters[0].ID)
+		require.Nil(t, cluster.UnlockKeys.Manager)
+	})
 }
 
 func TestListClusters(t *testing.T) {

@@ -317,8 +317,13 @@ message JoinTokenRotation {
 	// RotateWorkerToken tells UpdateCluster to rotate the worker secret.
 	bool rotate_worker_token = 1;
 
-	// RotateManagerSecret tells UpdateCluster to rotate the manager secret.
+	// RotateManagerToken tells UpdateCluster to rotate the manager secret.
 	bool rotate_manager_token = 2;
+}
+
+message UnlockKeyRotation {
+	// RotateManagerKey tells UpdateCluster to rotate the manager unlock key.
+	bool rotate_manager_key = 1;
 }
 
 message UpdateClusterRequest {
@@ -333,6 +338,9 @@ message UpdateClusterRequest {
 
 	// Rotation contains flags for join token rotation
 	JoinTokenRotation rotation = 4 [(gogoproto.nullable) = false];
+
+	// UnlockKeyRotation contains flags for rotating the unlock key
+	UnlockKeyRotation unlock_rotation = 5 [(gogoproto.nullable) = false];
 }
 
 message UpdateClusterResponse {

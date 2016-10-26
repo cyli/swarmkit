@@ -83,9 +83,9 @@ type Config struct {
 	// heartbeat sent to other members for health-check purposes
 	HeartbeatTick uint32
 
-	// AutoLockCluster determines whether or not an unlock key will be generated
+	// AutoLockManagers determines whether or not an unlock key will be generated
 	// when bootstrapping a new cluster for the first time
-	AutoLockCluster bool
+	AutoLockManagers bool
 
 	// UnlockKey is the key to unlock a node - used for decrypting at rest.  This
 	// only applies to nodes that have already joined a cluster.
@@ -563,7 +563,7 @@ func (n *Node) loadCertificates() error {
 func (n *Node) bootstrapCA() error {
 	// generate an unlock key, if it's required, overriding any provided unlock key
 	n.unlockKey = nil
-	if n.config.AutoLockCluster {
+	if n.config.AutoLockManagers {
 		n.unlockKey = encryption.GenerateSecretKey()
 	}
 
@@ -651,13 +651,15 @@ func (n *Node) runManager(ctx context.Context, securityConfig *ca.SecurityConfig
 				ListenAddr:    n.config.ListenRemoteAPI,
 				AdvertiseAddr: n.config.AdvertiseRemoteAPI,
 			},
-			ControlAPI:     n.config.ListenControlAPI,
-			SecurityConfig: securityConfig,
-			ExternalCAs:    n.config.ExternalCAs,
-			JoinRaft:       remoteAddr.Addr,
-			StateDir:       n.config.StateDir,
-			HeartbeatTick:  n.config.HeartbeatTick,
-			ElectionTick:   n.config.ElectionTick,
+			ControlAPI:       n.config.ListenControlAPI,
+			SecurityConfig:   securityConfig,
+			ExternalCAs:      n.config.ExternalCAs,
+			JoinRaft:         remoteAddr.Addr,
+			StateDir:         n.config.StateDir,
+			HeartbeatTick:    n.config.HeartbeatTick,
+			ElectionTick:     n.config.ElectionTick,
+			AutoLockManagers: n.config.AutoLockManagers,
+			UnlockKey:        n.unlockKey,
 		})
 		if err != nil {
 			return err

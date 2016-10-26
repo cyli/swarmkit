@@ -6,6 +6,7 @@ import (
 
 	"github.com/docker/swarmkit/api"
 	"github.com/docker/swarmkit/ca"
+	"github.com/docker/swarmkit/manager/encryption"
 	"github.com/docker/swarmkit/manager/state/store"
 	"github.com/docker/swarmkit/protobuf/ptypes"
 	"golang.org/x/net/context"
@@ -112,6 +113,13 @@ func (s *Server) UpdateCluster(ctx context.Context, request *api.UpdateClusterRe
 		}
 		if request.Rotation.RotateManagerToken {
 			cluster.RootCA.JoinTokens.Manager = ca.GenerateJoinToken(s.rootCA)
+		}
+		if cluster.Spec.EncryptionConfig.AutoLockManagers {
+			if cluster.UnlockKeys.Manager == nil || request.UnlockRotation.RotateManagerKey {
+				cluster.UnlockKeys.Manager = encryption.GenerateSecretKey()
+			}
+		} else {
+			cluster.UnlockKeys.Manager = nil
 		}
 		return store.UpdateCluster(tx, cluster)
 	})

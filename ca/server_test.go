@@ -364,7 +364,8 @@ func TestGetUnlockKey(t *testing.T) {
 	// Update the unlock key
 	assert.NoError(t, tc.MemoryStore.Update(func(tx store.Tx) error {
 		clusters, _ := store.FindClusters(tx, store.ByName(store.DefaultClusterName))
-		clusters[0].ManagerUnlockKey = []byte("secret")
+		clusters[0].Spec.EncryptionConfig.AutoLockManagers = true
+		clusters[0].UnlockKeys.Manager = []byte("secret")
 		return store.UpdateCluster(tx, clusters[0])
 	}))
 

@@ -94,6 +94,14 @@ type Config struct {
 	// HeartbeatTick defines the amount of ticks between each
 	// heartbeat sent to other members for health-check purposes
 	HeartbeatTick uint32
+
+	// AutoLockManagers determines whether or not an unlock key will be generated
+	// when bootstrapping a new cluster for the first time
+	AutoLockManagers bool
+
+	// UnlockKey is the key to unlock a node - used for decrypting at rest.  This
+	// only applies to nodes that have already joined a cluster.
+	UnlockKey []byte
 }
 
 // Manager is the cluster manager for Swarm.
@@ -558,7 +566,7 @@ func (m *Manager) watchForKEKChanges(ctx context.Context) {
 		select {
 		case event := <-clusterWatch:
 			clusterEvent := event.(state.EventUpdateCluster)
-			kek := clusterEvent.Cluster.ManagerUnlockKey
+			kek := clusterEvent.Cluster.UnlockKeys.Manager
 			switch {
 			case subtle.ConstantTimeCompare(kek, m.keyRotator.GetCurrentKEK()) == 1:
 				// if the KEK hasn't changed, do nothing
@@ -747,7 +755,13 @@ func (m *Manager) becomeLeader(ctx context.Context) {
 		// store. Don't check the error because
 		// we expect this to fail unless this
 		// is a brand new cluster.
-		store.CreateCluster(tx, defaultClusterObject(clusterID, initialCAConfig, raftCfg, rootCA, m.keyRotator.GetCurrentKEK()))
+		store.CreateCluster(tx, defaultClusterObject(
+			clusterID,
+			initialCAConfig,
+			raftCfg,
+			api.EncryptionConfig{AutoLockManagers: m.config.AutoLockManagers},
+			api.UnlockKeys{Manager: m.config.UnlockKey},
+			rootCA))
 		// Add Node entry for ourself, if one
 		// doesn't exist already.
 		store.CreateNode(tx, managerNode(nodeID))
@@ -869,7 +883,14 @@ func (m *Manager) becomeFollower() {
 }
 
 // defaultClusterObject creates a default cluster.
-func defaultClusterObject(clusterID string, initialCAConfig api.CAConfig, raftCfg api.RaftConfig, rootCA *ca.RootCA, kek []byte) *api.Cluster {
+func defaultClusterObject(
+	clusterID string,
+	initialCAConfig api.CAConfig,
+	raftCfg api.RaftConfig,
+	encryptionConfig api.EncryptionConfig,
+	initialUnlockKeys api.UnlockKeys,
+	rootCA *ca.RootCA) *api.Cluster {
+
 	return &api.Cluster{
 		ID: clusterID,
 		Spec: api.ClusterSpec{
@@ -882,8 +903,9 @@ func defaultClusterObject(clusterID string, initialCAConfig api.CAConfig, raftCf
 			Dispatcher: api.DispatcherConfig{
 				HeartbeatPeriod: ptypes.DurationProto(dispatcher.DefaultHeartBeatPeriod),
 			},
-			Raft:     raftCfg,
-			CAConfig: initialCAConfig,
+			Raft:             raftCfg,
+			CAConfig:         initialCAConfig,
+			EncryptionConfig: encryptionConfig,
 		},
 		RootCA: api.RootCA{
 			CAKey:      rootCA.Key,
@@ -894,7 +916,7 @@ func defaultClusterObject(clusterID string, initialCAConfig api.CAConfig, raftCf
 				Manager: ca.GenerateJoinToken(rootCA),
 			},
 		},
-		ManagerUnlockKey: kek,
+		UnlockKeys: initialUnlockKeys,
 	}
 }
 
