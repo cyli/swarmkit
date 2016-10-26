@@ -21,6 +21,7 @@ import (
 	"github.com/docker/swarmkit/ioutils"
 	"github.com/docker/swarmkit/log"
 	"github.com/docker/swarmkit/manager"
+	"github.com/docker/swarmkit/manager/encryption"
 	"github.com/docker/swarmkit/remotes"
 	"github.com/docker/swarmkit/xnet"
 	"github.com/pkg/errors"
@@ -82,7 +83,12 @@ type Config struct {
 	// heartbeat sent to other members for health-check purposes
 	HeartbeatTick uint32
 
-	// UnlockKey is the key to unlock a node - used for decrypting at rest
+	// AutoLockCluster determines whether or not an unlock key will be generated
+	// when bootstrapping a new cluster for the first time
+	AutoLockCluster bool
+
+	// UnlockKey is the key to unlock a node - used for decrypting at rest.  This
+	// only applies to nodes that have already joined a cluster.
 	UnlockKey []byte
 }
 
@@ -109,6 +115,7 @@ type Node struct {
 	agent                *agent.Agent
 	manager              *manager.Manager
 	notifyNodeChange     chan *api.Node // used to send role updates from the dispatcher api on promotion/demotion
+	unlockKey            []byte
 }
 
 // RemoteAPIAddr returns address on which remote manager api listens.
@@ -153,6 +160,7 @@ func New(c *Config) (*Node, error) {
 		ready:                make(chan struct{}),
 		certificateRequested: make(chan struct{}),
 		notifyNodeChange:     make(chan *api.Node, 1),
+		unlockKey:            c.UnlockKey,
 	}
 	n.roleCond = sync.NewCond(n.RLocker())
 	n.connCond = sync.NewCond(n.RLocker())
@@ -235,7 +243,7 @@ func (n *Node) run(ctx context.Context) (err error) {
 	// certificates and write them to disk
 	securityConfig, err := ca.LoadOrCreateSecurityConfig(
 		ctx, certDir, n.config.JoinToken, ca.ManagerRole, n.remotes, issueResponseChan,
-		n.config.UnlockKey, manager.MaintainEncryptedPEMHeaders)
+		n.unlockKey, manager.MaintainEncryptedPEMHeaders)
 	if err != nil {
 		return err
 	}
@@ -532,7 +540,7 @@ func (n *Node) loadCertificates() error {
 		return err
 	}
 	configPaths := ca.NewConfigPaths(certDir)
-	krw := ca.NewKeyReadWriter(configPaths.Node, n.config.UnlockKey, nil)
+	krw := ca.NewKeyReadWriter(configPaths.Node, n.unlockKey, nil)
 	clientTLSCreds, _, err := ca.LoadTLSCreds(rootCA, krw)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -553,9 +561,15 @@ func (n *Node) loadCertificates() error {
 }
 
 func (n *Node) bootstrapCA() error {
+	// generate an unlock key, if it's required, overriding any provided unlock key
+	n.unlockKey = nil
+	if n.config.AutoLockCluster {
+		n.unlockKey = encryption.GenerateSecretKey()
+	}
+
 	if err := ca.BootstrapCluster(
 		filepath.Join(n.config.StateDir, "certificates"),
-		n.config.UnlockKey,
+		n.unlockKey,
 		manager.MaintainEncryptedPEMHeaders); err != nil {
 		return err
 	}

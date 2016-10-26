@@ -230,6 +230,12 @@ message Cluster {
 	// be honored. It's a mapping from CN -> BlacklistedCertificate.
 	// swarm. Their certificates should effectively be blacklisted.
 	map<string, BlacklistedCertificate> blacklisted_certificates = 8;
+
+	// ManagerUnlockKey defines the key that locks a manager at rest.  This is the
+	// key encrypting key (KEK) that will encrypt the manager TLS keys at rest and
+	// the raft encryption keys at rest.  If not provided, then managers will be
+	// unlocked (will not require a key to start up from a shut down state).
+	bytes manager_unlock_key = 9;
 }
 
 // Secret represents a secret that should be passed to a container or a node,

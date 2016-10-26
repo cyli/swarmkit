@@ -89,20 +89,20 @@ func (m *GetRootCACertificateResponse) Reset()                    { *m = GetRoot
 func (*GetRootCACertificateResponse) ProtoMessage()               {}
 func (*GetRootCACertificateResponse) Descriptor() ([]byte, []int) { return fileDescriptorCa, []int{5} }
 
-type GetEncryptionConfigRequest struct {
+type GetUnlockKeyRequest struct {
 }
 
-func (m *GetEncryptionConfigRequest) Reset()                    { *m = GetEncryptionConfigRequest{} }
-func (*GetEncryptionConfigRequest) ProtoMessage()               {}
-func (*GetEncryptionConfigRequest) Descriptor() ([]byte, []int) { return fileDescriptorCa, []int{6} }
+func (m *GetUnlockKeyRequest) Reset()                    { *m = GetUnlockKeyRequest{} }
+func (*GetUnlockKeyRequest) ProtoMessage()               {}
+func (*GetUnlockKeyRequest) Descriptor() ([]byte, []int) { return fileDescriptorCa, []int{6} }
 
-type GetEncryptionConfigResponse struct {
-	EncryptionConfig *EncryptionConfig `protobuf:"bytes,1,opt,name=encryption_config,json=encryptionConfig" json:"encryption_config,omitempty"`
+type GetUnlockKeyResponse struct {
+	UnlockKey []byte `protobuf:"bytes,1,opt,name=unlock_key,json=unlockKey,proto3" json:"unlock_key,omitempty"`
 }
 
-func (m *GetEncryptionConfigResponse) Reset()                    { *m = GetEncryptionConfigResponse{} }
-func (*GetEncryptionConfigResponse) ProtoMessage()               {}
-func (*GetEncryptionConfigResponse) Descriptor() ([]byte, []int) { return fileDescriptorCa, []int{7} }
+func (m *GetUnlockKeyResponse) Reset()                    { *m = GetUnlockKeyResponse{} }
+func (*GetUnlockKeyResponse) ProtoMessage()               {}
+func (*GetUnlockKeyResponse) Descriptor() ([]byte, []int) { return fileDescriptorCa, []int{7} }
 
 func init() {
 	proto.RegisterType((*NodeCertificateStatusRequest)(nil), "docker.swarmkit.v1.NodeCertificateStatusRequest")
@@ -111,8 +111,8 @@ func init() {
 	proto.RegisterType((*IssueNodeCertificateResponse)(nil), "docker.swarmkit.v1.IssueNodeCertificateResponse")
 	proto.RegisterType((*GetRootCACertificateRequest)(nil), "docker.swarmkit.v1.GetRootCACertificateRequest")
 	proto.RegisterType((*GetRootCACertificateResponse)(nil), "docker.swarmkit.v1.GetRootCACertificateResponse")
-	proto.RegisterType((*GetEncryptionConfigRequest)(nil), "docker.swarmkit.v1.GetEncryptionConfigRequest")
-	proto.RegisterType((*GetEncryptionConfigResponse)(nil), "docker.swarmkit.v1.GetEncryptionConfigResponse")
+	proto.RegisterType((*GetUnlockKeyRequest)(nil), "docker.swarmkit.v1.GetUnlockKeyRequest")
+	proto.RegisterType((*GetUnlockKeyResponse)(nil), "docker.swarmkit.v1.GetUnlockKeyResponse")
 }
 
 type authenticatedWrapperCAServer struct {
@@ -154,12 +154,12 @@ func (p *authenticatedWrapperNodeCAServer) NodeCertificateStatus(ctx context.Con
 	return p.local.NodeCertificateStatus(ctx, r)
 }
 
-func (p *authenticatedWrapperNodeCAServer) GetEncryptionConfig(ctx context.Context, r *GetEncryptionConfigRequest) (*GetEncryptionConfigResponse, error) {
+func (p *authenticatedWrapperNodeCAServer) GetUnlockKey(ctx context.Context, r *GetUnlockKeyRequest) (*GetUnlockKeyResponse, error) {
 
 	if err := p.authorize(ctx, []string{"swarm-manager"}); err != nil {
 		return nil, err
 	}
-	return p.local.GetEncryptionConfig(ctx, r)
+	return p.local.GetUnlockKey(ctx, r)
 }
 
 func (m *NodeCertificateStatusRequest) Copy() *NodeCertificateStatusRequest {
@@ -236,23 +236,23 @@ func (m *GetRootCACertificateResponse) Copy() *GetRootCACertificateResponse {
 	return o
 }
 
-func (m *GetEncryptionConfigRequest) Copy() *GetEncryptionConfigRequest {
+func (m *GetUnlockKeyRequest) Copy() *GetUnlockKeyRequest {
 	if m == nil {
 		return nil
 	}
 
-	o := &GetEncryptionConfigRequest{}
+	o := &GetUnlockKeyRequest{}
 
 	return o
 }
 
-func (m *GetEncryptionConfigResponse) Copy() *GetEncryptionConfigResponse {
+func (m *GetUnlockKeyResponse) Copy() *GetUnlockKeyResponse {
 	if m == nil {
 		return nil
 	}
 
-	o := &GetEncryptionConfigResponse{
-		EncryptionConfig: m.EncryptionConfig.Copy(),
+	o := &GetUnlockKeyResponse{
+		UnlockKey: m.UnlockKey,
 	}
 
 	return o
@@ -325,24 +325,22 @@ func (this *GetRootCACertificateResponse) GoString() string {
 	s = append(s, "}")
 	return strings.Join(s, "")
 }
-func (this *GetEncryptionConfigRequest) GoString() string {
+func (this *GetUnlockKeyRequest) GoString() string {
 	if this == nil {
 		return "nil"
 	}
 	s := make([]string, 0, 4)
-	s = append(s, "&api.GetEncryptionConfigRequest{")
+	s = append(s, "&api.GetUnlockKeyRequest{")
 	s = append(s, "}")
 	return strings.Join(s, "")
 }
-func (this *GetEncryptionConfigResponse) GoString() string {
+func (this *GetUnlockKeyResponse) GoString() string {
 	if this == nil {
 		return "nil"
 	}
 	s := make([]string, 0, 5)
-	s = append(s, "&api.GetEncryptionConfigResponse{")
-	if this.EncryptionConfig != nil {
-		s = append(s, "EncryptionConfig: "+fmt.Sprintf("%#v", this.EncryptionConfig)+",\n")
-	}
+	s = append(s, "&api.GetUnlockKeyResponse{")
+	s = append(s, "UnlockKey: "+fmt.Sprintf("%#v", this.UnlockKey)+",\n")
 	s = append(s, "}")
 	return strings.Join(s, "")
 }
@@ -450,8 +448,9 @@ var _CA_serviceDesc = grpc.ServiceDesc{
 type NodeCAClient interface {
 	IssueNodeCertificate(ctx context.Context, in *IssueNodeCertificateRequest, opts ...grpc.CallOption) (*IssueNodeCertificateResponse, error)
 	NodeCertificateStatus(ctx context.Context, in *NodeCertificateStatusRequest, opts ...grpc.CallOption) (*NodeCertificateStatusResponse, error)
-	// GetEncryptionConfig returns the current encryption configuration for the cluster
-	GetEncryptionConfig(ctx context.Context, in *GetEncryptionConfigRequest, opts ...grpc.CallOption) (*GetEncryptionConfigResponse, error)
+	// GetUnlockKey returns the current unlock key for the cluster for the role of the client
+	// asking.
+	GetUnlockKey(ctx context.Context, in *GetUnlockKeyRequest, opts ...grpc.CallOption) (*GetUnlockKeyResponse, error)
 }
 
 type nodeCAClient struct {
@@ -480,9 +479,9 @@ func (c *nodeCAClient) NodeCertificateStatus(ctx context.Context, in *NodeCertif
 	return out, nil
 }
 
-func (c *nodeCAClient) GetEncryptionConfig(ctx context.Context, in *GetEncryptionConfigRequest, opts ...grpc.CallOption) (*GetEncryptionConfigResponse, error) {
-	out := new(GetEncryptionConfigResponse)
-	err := grpc.Invoke(ctx, "/docker.swarmkit.v1.NodeCA/GetEncryptionConfig", in, out, c.cc, opts...)
+func (c *nodeCAClient) GetUnlockKey(ctx context.Context, in *GetUnlockKeyRequest, opts ...grpc.CallOption) (*GetUnlockKeyResponse, error) {
+	out := new(GetUnlockKeyResponse)
+	err := grpc.Invoke(ctx, "/docker.swarmkit.v1.NodeCA/GetUnlockKey", in, out, c.cc, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -494,8 +493,9 @@ func (c *nodeCAClient) GetEncryptionConfig(ctx context.Context, in *GetEncryptio
 type NodeCAServer interface {
 	IssueNodeCertificate(context.Context, *IssueNodeCertificateRequest) (*IssueNodeCertificateResponse, error)
 	NodeCertificateStatus(context.Context, *NodeCertificateStatusRequest) (*NodeCertificateStatusResponse, error)
-	// GetEncryptionConfig returns the current encryption configuration for the cluster
-	GetEncryptionConfig(context.Context, *GetEncryptionConfigRequest) (*GetEncryptionConfigResponse, error)
+	// GetUnlockKey returns the current unlock key for the cluster for the role of the client
+	// asking.
+	GetUnlockKey(context.Context, *GetUnlockKeyRequest) (*GetUnlockKeyResponse, error)
 }
 
 func RegisterNodeCAServer(s *grpc.Server, srv NodeCAServer) {
@@ -538,20 +538,20 @@ func _NodeCA_NodeCertificateStatus_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
-func _NodeCA_GetEncryptionConfig_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GetEncryptionConfigRequest)
+func _NodeCA_GetUnlockKey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetUnlockKeyRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(NodeCAServer).GetEncryptionConfig(ctx, in)
+		return srv.(NodeCAServer).GetUnlockKey(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/docker.swarmkit.v1.NodeCA/GetEncryptionConfig",
+		FullMethod: "/docker.swarmkit.v1.NodeCA/GetUnlockKey",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(NodeCAServer).GetEncryptionConfig(ctx, req.(*GetEncryptionConfigRequest))
+		return srv.(NodeCAServer).GetUnlockKey(ctx, req.(*GetUnlockKeyRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -569,8 +569,8 @@ var _NodeCA_serviceDesc = grpc.ServiceDesc{
 			Handler:    _NodeCA_NodeCertificateStatus_Handler,
 		},
 		{
-			MethodName: "GetEncryptionConfig",
-			Handler:    _NodeCA_GetEncryptionConfig_Handler,
+			MethodName: "GetUnlockKey",
+			Handler:    _NodeCA_GetUnlockKey_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
@@ -745,7 +745,7 @@ func (m *GetRootCACertificateResponse) MarshalTo(data []byte) (int, error) {
 	return i, nil
 }
 
-func (m *GetEncryptionConfigRequest) Marshal() (data []byte, err error) {
+func (m *GetUnlockKeyRequest) Marshal() (data []byte, err error) {
 	size := m.Size()
 	data = make([]byte, size)
 	n, err := m.MarshalTo(data)
@@ -755,7 +755,7 @@ func (m *GetEncryptionConfigRequest) Marshal() (data []byte, err error) {
 	return data[:n], nil
 }
 
-func (m *GetEncryptionConfigRequest) MarshalTo(data []byte) (int, error) {
+func (m *GetUnlockKeyRequest) MarshalTo(data []byte) (int, error) {
 	var i int
 	_ = i
 	var l int
@@ -763,7 +763,7 @@ func (m *GetEncryptionConfigRequest) MarshalTo(data []byte) (int, error) {
 	return i, nil
 }
 
-func (m *GetEncryptionConfigResponse) Marshal() (data []byte, err error) {
+func (m *GetUnlockKeyResponse) Marshal() (data []byte, err error) {
 	size := m.Size()
 	data = make([]byte, size)
 	n, err := m.MarshalTo(data)
@@ -773,20 +773,16 @@ func (m *GetEncryptionConfigResponse) Marshal() (data []byte, err error) {
 	return data[:n], nil
 }
 
-func (m *GetEncryptionConfigResponse) MarshalTo(data []byte) (int, error) {
+func (m *GetUnlockKeyResponse) MarshalTo(data []byte) (int, error) {
 	var i int
 	_ = i
 	var l int
 	_ = l
-	if m.EncryptionConfig != nil {
+	if len(m.UnlockKey) > 0 {
 		data[i] = 0xa
 		i++
-		i = encodeVarintCa(data, i, uint64(m.EncryptionConfig.Size()))
-		n3, err := m.EncryptionConfig.MarshalTo(data[i:])
-		if err != nil {
-			return 0, err
-		}
-		i += n3
+		i = encodeVarintCa(data, i, uint64(len(m.UnlockKey)))
+		i += copy(data[i:], m.UnlockKey)
 	}
 	return i, nil
 }
@@ -1044,12 +1040,12 @@ func (p *raftProxyNodeCAServer) NodeCertificateStatus(ctx context.Context, r *No
 	return resp, err
 }
 
-func (p *raftProxyNodeCAServer) GetEncryptionConfig(ctx context.Context, r *GetEncryptionConfigRequest) (*GetEncryptionConfigResponse, error) {
+func (p *raftProxyNodeCAServer) GetUnlockKey(ctx context.Context, r *GetUnlockKeyRequest) (*GetUnlockKeyResponse, error) {
 
 	conn, err := p.connSelector.LeaderConn(ctx)
 	if err != nil {
 		if err == raftselector.ErrIsLeader {
-			return p.local.GetEncryptionConfig(ctx, r)
+			return p.local.GetUnlockKey(ctx, r)
 		}
 		return nil, err
 	}
@@ -1058,7 +1054,7 @@ func (p *raftProxyNodeCAServer) GetEncryptionConfig(ctx context.Context, r *GetE
 		return nil, err
 	}
 
-	resp, err := NewNodeCAClient(conn).GetEncryptionConfig(modCtx, r)
+	resp, err := NewNodeCAClient(conn).GetUnlockKey(modCtx, r)
 	if err != nil {
 		if !strings.Contains(err.Error(), "is closing") && !strings.Contains(err.Error(), "the connection is unavailable") && !strings.Contains(err.Error(), "connection error") {
 			return resp, err
@@ -1066,11 +1062,11 @@ func (p *raftProxyNodeCAServer) GetEncryptionConfig(ctx context.Context, r *GetE
 		conn, err := p.pollNewLeaderConn(ctx)
 		if err != nil {
 			if err == raftselector.ErrIsLeader {
-				return p.local.GetEncryptionConfig(ctx, r)
+				return p.local.GetUnlockKey(ctx, r)
 			}
 			return nil, err
 		}
-		return NewNodeCAClient(conn).GetEncryptionConfig(modCtx, r)
+		return NewNodeCAClient(conn).GetUnlockKey(modCtx, r)
 	}
 	return resp, err
 }
@@ -1145,17 +1141,17 @@ func (m *GetRootCACertificateResponse) Size() (n int) {
 	return n
 }
 
-func (m *GetEncryptionConfigRequest) Size() (n int) {
+func (m *GetUnlockKeyRequest) Size() (n int) {
 	var l int
 	_ = l
 	return n
 }
 
-func (m *GetEncryptionConfigResponse) Size() (n int) {
+func (m *GetUnlockKeyResponse) Size() (n int) {
 	var l int
 	_ = l
-	if m.EncryptionConfig != nil {
-		l = m.EncryptionConfig.Size()
+	l = len(m.UnlockKey)
+	if l > 0 {
 		n += 1 + l + sovCa(uint64(l))
 	}
 	return n
@@ -1237,21 +1233,21 @@ func (this *GetRootCACertificateResponse) String() string {
 	}, "")
 	return s
 }
-func (this *GetEncryptionConfigRequest) String() string {
+func (this *GetUnlockKeyRequest) String() string {
 	if this == nil {
 		return "nil"
 	}
-	s := strings.Join([]string{`&GetEncryptionConfigRequest{`,
+	s := strings.Join([]string{`&GetUnlockKeyRequest{`,
 		`}`,
 	}, "")
 	return s
 }
-func (this *GetEncryptionConfigResponse) String() string {
+func (this *GetUnlockKeyResponse) String() string {
 	if this == nil {
 		return "nil"
 	}
-	s := strings.Join([]string{`&GetEncryptionConfigResponse{`,
-		`EncryptionConfig:` + strings.Replace(fmt.Sprintf("%v", this.EncryptionConfig), "EncryptionConfig", "EncryptionConfig", 1) + `,`,
+	s := strings.Join([]string{`&GetUnlockKeyResponse{`,
+		`UnlockKey:` + fmt.Sprintf("%v", this.UnlockKey) + `,`,
 		`}`,
 	}, "")
 	return s
@@ -1817,7 +1813,7 @@ func (m *GetRootCACertificateResponse) Unmarshal(data []byte) error {
 	}
 	return nil
 }
-func (m *GetEncryptionConfigRequest) Unmarshal(data []byte) error {
+func (m *GetUnlockKeyRequest) Unmarshal(data []byte) error {
 	l := len(data)
 	iNdEx := 0
 	for iNdEx < l {
@@ -1840,10 +1836,10 @@ func (m *GetEncryptionConfigRequest) Unmarshal(data []byte) error {
 		fieldNum := int32(wire >> 3)
 		wireType := int(wire & 0x7)
 		if wireType == 4 {
-			return fmt.Errorf("proto: GetEncryptionConfigRequest: wiretype end group for non-group")
+			return fmt.Errorf("proto: GetUnlockKeyRequest: wiretype end group for non-group")
 		}
 		if fieldNum <= 0 {
-			return fmt.Errorf("proto: GetEncryptionConfigRequest: illegal tag %d (wire type %d)", fieldNum, wire)
+			return fmt.Errorf("proto: GetUnlockKeyRequest: illegal tag %d (wire type %d)", fieldNum, wire)
 		}
 		switch fieldNum {
 		default:
@@ -1867,7 +1863,7 @@ func (m *GetEncryptionConfigRequest) Unmarshal(data []byte) error {
 	}
 	return nil
 }
-func (m *GetEncryptionConfigResponse) Unmarshal(data []byte) error {
+func (m *GetUnlockKeyResponse) Unmarshal(data []byte) error {
 	l := len(data)
 	iNdEx := 0
 	for iNdEx < l {
@@ -1890,17 +1886,17 @@ func (m *GetEncryptionConfigResponse) Unmarshal(data []byte) error {
 		fieldNum := int32(wire >> 3)
 		wireType := int(wire & 0x7)
 		if wireType == 4 {
-			return fmt.Errorf("proto: GetEncryptionConfigResponse: wiretype end group for non-group")
+			return fmt.Errorf("proto: GetUnlockKeyResponse: wiretype end group for non-group")
 		}
 		if fieldNum <= 0 {
-			return fmt.Errorf("proto: GetEncryptionConfigResponse: illegal tag %d (wire type %d)", fieldNum, wire)
+			return fmt.Errorf("proto: GetUnlockKeyResponse: illegal tag %d (wire type %d)", fieldNum, wire)
 		}
 		switch fieldNum {
 		case 1:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field EncryptionConfig", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field UnlockKey", wireType)
 			}
-			var msglen int
+			var byteLen int
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return ErrIntOverflowCa
@@ -1910,23 +1906,21 @@ func (m *GetEncryptionConfigResponse) Unmarshal(data []byte) error {
 				}
 				b := data[iNdEx]
 				iNdEx++
-				msglen |= (int(b) & 0x7F) << shift
+				byteLen |= (int(b) & 0x7F) << shift
 				if b < 0x80 {
 					break
 				}
 			}
-			if msglen < 0 {
+			if byteLen < 0 {
 				return ErrInvalidLengthCa
 			}
-			postIndex := iNdEx + msglen
+			postIndex := iNdEx + byteLen
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			if m.EncryptionConfig == nil {
-				m.EncryptionConfig = &EncryptionConfig{}
-			}
-			if err := m.EncryptionConfig.Unmarshal(data[iNdEx:postIndex]); err != nil {
-				return err
+			m.UnlockKey = append(m.UnlockKey[:0], data[iNdEx:postIndex]...)
+			if m.UnlockKey == nil {
+				m.UnlockKey = []byte{}
 			}
 			iNdEx = postIndex
 		default:
@@ -2058,41 +2052,41 @@ var (
 func init() { proto.RegisterFile("ca.proto", fileDescriptorCa) }
 
 var fileDescriptorCa = []byte{
-	// 574 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x09, 0x6e, 0x88, 0x02, 0xff, 0x94, 0x94, 0xc1, 0x6e, 0xd3, 0x40,
-	0x10, 0x86, 0xbb, 0x09, 0xa4, 0x65, 0x52, 0xd2, 0xb2, 0x4d, 0xa5, 0xe0, 0xba, 0x4e, 0x65, 0x90,
-	0xe0, 0x82, 0xd3, 0x06, 0x4e, 0x9c, 0x48, 0x0c, 0xaa, 0x72, 0x00, 0x81, 0xf3, 0x00, 0x95, 0xeb,
-	0x4c, 0x83, 0x95, 0xc4, 0x6b, 0xbc, 0x1b, 0x50, 0x6f, 0x48, 0x20, 0x0e, 0x48, 0x1c, 0x91, 0x38,
-	0x71, 0xe5, 0xc6, 0x73, 0x54, 0x9c, 0x38, 0x72, 0xaa, 0x88, 0x1f, 0x00, 0xf1, 0x08, 0xc8, 0x1b,
-	0xa7, 0x69, 0x9b, 0x75, 0x14, 0x4e, 0xf1, 0xce, 0xcc, 0xff, 0xfb, 0x9b, 0xf1, 0x64, 0x61, 0xc5,
-	0x73, 0xad, 0x30, 0x62, 0x82, 0x51, 0xda, 0x61, 0x5e, 0x0f, 0x23, 0x8b, 0xbf, 0x71, 0xa3, 0x41,
-	0xcf, 0x17, 0xd6, 0xeb, 0x3d, 0xad, 0x28, 0x8e, 0x43, 0xe4, 0xe3, 0x02, 0xad, 0xc8, 0x43, 0xf4,
-	0x26, 0x87, 0x72, 0x97, 0x75, 0x99, 0x7c, 0xac, 0x25, 0x4f, 0x69, 0x74, 0x23, 0xec, 0x0f, 0xbb,
-	0x7e, 0x50, 0x1b, 0xff, 0x8c, 0x83, 0xa6, 0x0d, 0xfa, 0x33, 0xd6, 0x41, 0x1b, 0x23, 0xe1, 0x1f,
-	0xf9, 0x9e, 0x2b, 0xb0, 0x2d, 0x5c, 0x31, 0xe4, 0x0e, 0xbe, 0x1a, 0x22, 0x17, 0xf4, 0x16, 0x2c,
-	0x07, 0xac, 0x83, 0x07, 0x7e, 0xa7, 0x42, 0x76, 0xc8, 0xdd, 0x6b, 0x4d, 0x88, 0x4f, 0xab, 0x85,
-	0x44, 0xd2, 0x7a, 0xec, 0x14, 0x92, 0x54, 0xab, 0x63, 0x7e, 0x25, 0xb0, 0x9d, 0xe1, 0xc2, 0x43,
-	0x16, 0x70, 0xa4, 0x0f, 0xa1, 0xc0, 0x65, 0x44, 0xba, 0x14, 0xeb, 0xa6, 0x35, 0xdb, 0x90, 0xd5,
-	0xe2, 0x7c, 0xe8, 0x06, 0xde, 0x44, 0x9b, 0x2a, 0x68, 0x03, 0x8a, 0xde, 0xd4, 0xb8, 0x92, 0x93,
-	0x06, 0x55, 0x95, 0xc1, 0xb9, 0xf7, 0x3b, 0xe7, 0x35, 0xe6, 0x7b, 0x02, 0x5b, 0x89, 0x3b, 0x5e,
-	0xa2, 0x9c, 0x74, 0xf9, 0x00, 0xae, 0x44, 0xac, 0x8f, 0x12, 0xae, 0x54, 0xd7, 0x55, 0xde, 0x89,
-	0xd2, 0x61, 0x7d, 0x6c, 0xe6, 0x2a, 0xc4, 0x91, 0xd5, 0xf4, 0x26, 0xe4, 0x3d, 0x1e, 0x49, 0xa0,
-	0xd5, 0xe6, 0x72, 0x7c, 0x5a, 0xcd, 0xdb, 0x6d, 0xc7, 0x49, 0x62, 0xb4, 0x0c, 0x57, 0x05, 0xeb,
-	0x61, 0x50, 0xc9, 0x27, 0x43, 0x73, 0xc6, 0x07, 0xf3, 0x33, 0x01, 0x5d, 0x8d, 0x91, 0x8e, 0x69,
-	0x91, 0x69, 0xd3, 0xe7, 0xb0, 0x26, 0x8b, 0x06, 0x38, 0x38, 0xc4, 0x88, 0xbf, 0xf4, 0x43, 0x89,
-	0x50, 0xaa, 0xdf, 0xc9, 0xe2, 0x6e, 0x87, 0xe8, 0x59, 0x4f, 0xcf, 0xca, 0x9d, 0x52, 0xa2, 0x9f,
-	0x9e, 0xcd, 0x6d, 0xd8, 0xda, 0x47, 0xe1, 0x30, 0x26, 0xec, 0xc6, 0xec, 0x74, 0xcc, 0x47, 0xa0,
-	0xab, 0xd3, 0x29, 0xf5, 0xce, 0xc5, 0x0f, 0x94, 0x90, 0xaf, 0x5e, 0x9c, 0xbf, 0x0e, 0xda, 0x3e,
-	0x8a, 0x27, 0x81, 0x17, 0x1d, 0x87, 0xc2, 0x67, 0x81, 0xcd, 0x82, 0x23, 0xbf, 0x3b, 0xf1, 0x0f,
-	0xe5, 0xeb, 0x67, 0xb3, 0xa9, 0xfd, 0x0b, 0xb8, 0x81, 0x67, 0xb9, 0x03, 0x4f, 0x26, 0xd3, 0x35,
-	0xba, 0xad, 0xea, 0x78, 0xc6, 0x68, 0x1d, 0x2f, 0x45, 0xea, 0x1f, 0x09, 0xe4, 0xec, 0x06, 0x7d,
-	0x47, 0xa0, 0xac, 0xea, 0x8c, 0xd6, 0x54, 0xbe, 0x73, 0x46, 0xa4, 0xed, 0x2e, 0x2e, 0x18, 0x77,
-	0x65, 0xae, 0xfc, 0xf8, 0xfe, 0xe7, 0x4b, 0x2e, 0xb7, 0x4e, 0xea, 0xdf, 0xf2, 0x20, 0x3f, 0x71,
-	0x0a, 0xa4, 0x5a, 0x10, 0x35, 0xd0, 0x9c, 0x8d, 0x56, 0x03, 0xcd, 0xdb, 0xbd, 0x29, 0x10, 0xfd,
-	0x40, 0x60, 0x53, 0xf9, 0x77, 0xa6, 0xbb, 0x59, 0x1b, 0x96, 0x75, 0x7f, 0x68, 0x7b, 0xff, 0xa1,
-	0x98, 0x01, 0xf9, 0x44, 0x60, 0x43, 0xb1, 0x19, 0xd4, 0xca, 0x98, 0x76, 0xc6, 0x82, 0x69, 0xb5,
-	0x85, 0xeb, 0x53, 0x84, 0x4d, 0x89, 0xb0, 0x06, 0xd7, 0xa5, 0xe0, 0xde, 0xc0, 0x0d, 0xdc, 0x2e,
-	0x46, 0x4d, 0xfd, 0x64, 0x64, 0x2c, 0xfd, 0x1a, 0x19, 0x4b, 0x7f, 0x47, 0x06, 0x79, 0x1b, 0x1b,
-	0xe4, 0x24, 0x36, 0xc8, 0xcf, 0xd8, 0x20, 0xbf, 0x63, 0x83, 0x1c, 0x16, 0xe4, 0x8d, 0x7a, 0xff,
-	0x5f, 0x00, 0x00, 0x00, 0xff, 0xff, 0x0a, 0x41, 0x5d, 0x22, 0xb6, 0x05, 0x00, 0x00,
+	// 562 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x09, 0x6e, 0x88, 0x02, 0xff, 0x94, 0x94, 0x41, 0x6f, 0x12, 0x41,
+	0x14, 0xc7, 0x3b, 0xa0, 0xb4, 0x7d, 0x54, 0x6a, 0xa6, 0x90, 0x20, 0x85, 0xa5, 0x59, 0x0f, 0xed,
+	0xc5, 0xa5, 0x45, 0xbd, 0x78, 0x12, 0x30, 0x69, 0x88, 0xd1, 0x98, 0x21, 0x9e, 0x9b, 0xed, 0xf2,
+	0xc4, 0x0d, 0xb0, 0xb3, 0xee, 0xcc, 0xaa, 0xdc, 0x4c, 0x34, 0x1e, 0xbc, 0x79, 0x30, 0xf1, 0xe4,
+	0x47, 0xf0, 0x73, 0x34, 0x9e, 0x3c, 0x7a, 0x6a, 0x64, 0x3f, 0x80, 0xf1, 0x23, 0x98, 0x1d, 0x16,
+	0x81, 0xb2, 0x8b, 0xf5, 0xc4, 0xce, 0x9b, 0xf7, 0xff, 0xcf, 0x6f, 0xde, 0x7b, 0x03, 0x6c, 0x58,
+	0xa6, 0xe1, 0x7a, 0x5c, 0x72, 0x4a, 0xbb, 0xdc, 0xea, 0xa3, 0x67, 0x88, 0x57, 0xa6, 0x37, 0xec,
+	0xdb, 0xd2, 0x78, 0x79, 0x54, 0xca, 0xca, 0x91, 0x8b, 0x62, 0x92, 0x50, 0xca, 0x0a, 0x17, 0xad,
+	0xe9, 0x22, 0xdf, 0xe3, 0x3d, 0xae, 0x3e, 0x6b, 0xe1, 0x57, 0x14, 0xdd, 0x71, 0x07, 0x7e, 0xcf,
+	0x76, 0x6a, 0x93, 0x9f, 0x49, 0x50, 0x6f, 0x41, 0xf9, 0x31, 0xef, 0x62, 0x0b, 0x3d, 0x69, 0x3f,
+	0xb3, 0x2d, 0x53, 0x62, 0x47, 0x9a, 0xd2, 0x17, 0x0c, 0x5f, 0xf8, 0x28, 0x24, 0xbd, 0x09, 0xeb,
+	0x0e, 0xef, 0xe2, 0x89, 0xdd, 0x2d, 0x92, 0x3d, 0x72, 0xb0, 0xd9, 0x84, 0xe0, 0xbc, 0x9a, 0x09,
+	0x25, 0xed, 0x07, 0x2c, 0x13, 0x6e, 0xb5, 0xbb, 0xfa, 0x17, 0x02, 0x95, 0x04, 0x17, 0xe1, 0x72,
+	0x47, 0x20, 0xbd, 0x07, 0x19, 0xa1, 0x22, 0xca, 0x25, 0x5b, 0xd7, 0x8d, 0xe5, 0x0b, 0x19, 0x6d,
+	0x21, 0x7c, 0xd3, 0xb1, 0xa6, 0xda, 0x48, 0x41, 0x1b, 0x90, 0xb5, 0x66, 0xc6, 0xc5, 0x94, 0x32,
+	0xa8, 0xc6, 0x19, 0xcc, 0x9d, 0xcf, 0xe6, 0x35, 0xfa, 0x3b, 0x02, 0xbb, 0xa1, 0x3b, 0x5e, 0xa0,
+	0x9c, 0xde, 0xf2, 0x0e, 0x5c, 0xf1, 0xf8, 0x00, 0x15, 0x5c, 0xae, 0x5e, 0x8e, 0xf3, 0x0e, 0x95,
+	0x8c, 0x0f, 0xb0, 0x99, 0x2a, 0x12, 0xa6, 0xb2, 0xe9, 0x0d, 0x48, 0x5b, 0xc2, 0x53, 0x40, 0x5b,
+	0xcd, 0xf5, 0xe0, 0xbc, 0x9a, 0x6e, 0x75, 0x18, 0x0b, 0x63, 0x34, 0x0f, 0x57, 0x25, 0xef, 0xa3,
+	0x53, 0x4c, 0x87, 0x45, 0x63, 0x93, 0x85, 0xfe, 0x89, 0x40, 0x39, 0x1e, 0x23, 0x2a, 0xd3, 0x65,
+	0xaa, 0x4d, 0x9f, 0xc0, 0xb6, 0x4a, 0x1a, 0xe2, 0xf0, 0x14, 0x3d, 0xf1, 0xdc, 0x76, 0x15, 0x42,
+	0xae, 0xbe, 0x9f, 0xc4, 0xdd, 0x71, 0xd1, 0x32, 0x1e, 0xfd, 0x4d, 0x67, 0xb9, 0x50, 0x3f, 0x5b,
+	0xeb, 0x15, 0xd8, 0x3d, 0x46, 0xc9, 0x38, 0x97, 0xad, 0xc6, 0x72, 0x75, 0xf4, 0xfb, 0x50, 0x8e,
+	0xdf, 0x8e, 0xa8, 0xf7, 0x16, 0x1b, 0x14, 0x92, 0x6f, 0x2d, 0xd6, 0xbf, 0x00, 0x3b, 0xc7, 0x28,
+	0x9f, 0x3a, 0x03, 0x6e, 0xf5, 0x1f, 0xe2, 0x68, 0x6a, 0x7c, 0x17, 0xf2, 0x8b, 0xe1, 0xc8, 0xb0,
+	0x02, 0xe0, 0xab, 0xe0, 0x49, 0x1f, 0x47, 0x91, 0xdf, 0xa6, 0x3f, 0x4d, 0xab, 0x7f, 0x20, 0x90,
+	0x6a, 0x35, 0xe8, 0x5b, 0xa2, 0xe4, 0x4b, 0x5c, 0xb4, 0x16, 0x57, 0x87, 0x15, 0x17, 0x2c, 0x1d,
+	0x5e, 0x5e, 0x30, 0x21, 0xd4, 0x37, 0xbe, 0x7d, 0xfd, 0xf5, 0x39, 0x95, 0xba, 0x4e, 0xea, 0x1f,
+	0xd3, 0xa0, 0x1a, 0x14, 0x01, 0xc5, 0xb5, 0x37, 0x1e, 0x68, 0xc5, 0x3c, 0xc6, 0x03, 0xad, 0x9a,
+	0x9c, 0x19, 0x10, 0x7d, 0x4f, 0xa0, 0x10, 0xfb, 0x18, 0xe9, 0x61, 0xd2, 0x7c, 0x24, 0xbd, 0xfe,
+	0xd2, 0xd1, 0x7f, 0x28, 0x96, 0x40, 0x5e, 0xc3, 0xd6, 0x7c, 0x77, 0xe9, 0x7e, 0x42, 0x95, 0x2f,
+	0x8e, 0x45, 0xe9, 0xe0, 0xdf, 0x89, 0xd1, 0x61, 0x05, 0x75, 0xd8, 0x36, 0x5c, 0x53, 0x99, 0xb7,
+	0x86, 0xa6, 0x63, 0xf6, 0xd0, 0x6b, 0x96, 0xcf, 0xc6, 0xda, 0xda, 0x8f, 0xb1, 0xb6, 0xf6, 0x7b,
+	0xac, 0x91, 0x37, 0x81, 0x46, 0xce, 0x02, 0x8d, 0x7c, 0x0f, 0x34, 0xf2, 0x33, 0xd0, 0xc8, 0x69,
+	0x46, 0xfd, 0xf3, 0xdd, 0xfe, 0x13, 0x00, 0x00, 0xff, 0xff, 0x3b, 0x9e, 0x62, 0xc2, 0x5e, 0x05,
+	0x00, 0x00,
 }

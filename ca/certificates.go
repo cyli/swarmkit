@@ -238,21 +238,17 @@ func (rca *RootCA) getKEKUpdate(ctx context.Context, cert *x509.Certificate, key
 		client := api.NewNodeCAClient(conn)
 		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
-		response, err := client.GetEncryptionConfig(ctx, &api.GetEncryptionConfigRequest{})
+		response, err := client.GetUnlockKey(ctx, &api.GetUnlockKeyRequest{})
 		if err != nil {
 			r.Observe(peer, -remotes.DefaultObservationWeight)
 			return nil, err
 		}
 		r.Observe(peer, remotes.DefaultObservationWeight)
-		update := KEKUpdate{}
-		if response.EncryptionConfig != nil {
-			update.KEK = response.EncryptionConfig.ManagerUnlockKey
-		}
-		return &update, nil
+		return &KEKUpdate{KEK: response.UnlockKey}, nil
 	}
 
-	// If this is a worker set to never encrypt. We always want to set to the lock key to nil, in case this was a manager that was demoted
-	// to a worker.
+	// If this is a worker, set to never encrypt. We always want to set to the lock key to nil,
+	// in case this was a manager that was demoted to a worker.
 	return &KEKUpdate{}, nil
 }
 

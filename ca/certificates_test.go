@@ -312,9 +312,7 @@ func TestRequestAndSaveNewCertificates(t *testing.T) {
 	// be encrypted with that kek
 	assert.NoError(t, tc.MemoryStore.Update(func(tx store.Tx) error {
 		cluster := store.GetCluster(tx, tc.Organization)
-		cluster.Spec.EncryptionConfig = api.EncryptionConfig{
-			ManagerUnlockKey: []byte("kek!"),
-		}
+		cluster.ManagerUnlockKey = []byte("kek!")
 		return store.UpdateCluster(tx, cluster)
 	}))
 	assert.NoError(t, os.RemoveAll(tc.Paths.Node.Cert))

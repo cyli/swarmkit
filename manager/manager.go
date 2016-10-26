@@ -1,7 +1,6 @@
 package manager
 
 import (
-	"crypto/rand"
 	"crypto/subtle"
 	"crypto/x509"
 	"encoding/base64"
@@ -505,11 +504,8 @@ func (m *Manager) joinAndStart(ctx context.Context) error {
 		// if there is no DEK, create a new one
 		dekStr, foundDEK := headers[defaultRaftDEKKey]
 		if !foundDEK {
-			newDEK := make([]byte, 32)
-			_, err := rand.Read(newDEK)
-			if err != nil {
-				return err
-			}
+			newDEK := encryption.GenerateSecretKey()
+			var err error
 			if headers[defaultRaftDEKKey], err = encodePEMHeaderValue(newDEK, kek); err != nil {
 				return err
 			}
@@ -562,7 +558,7 @@ func (m *Manager) watchForKEKChanges(ctx context.Context) {
 		select {
 		case event := <-clusterWatch:
 			clusterEvent := event.(state.EventUpdateCluster)
-			kek := clusterEvent.Cluster.Spec.EncryptionConfig.ManagerUnlockKey
+			kek := clusterEvent.Cluster.ManagerUnlockKey
 			switch {
 			case subtle.ConstantTimeCompare(kek, m.keyRotator.GetCurrentKEK()) == 1:
 				// if the KEK hasn't changed, do nothing
@@ -888,9 +884,6 @@ func defaultClusterObject(clusterID string, initialCAConfig api.CAConfig, raftCf
 			},
 			Raft:     raftCfg,
 			CAConfig: initialCAConfig,
-			EncryptionConfig: api.EncryptionConfig{
-				ManagerUnlockKey: kek,
-			},
 		},
 		RootCA: api.RootCA{
 			CAKey:      rootCA.Key,
@@ -901,6 +894,7 @@ func defaultClusterObject(clusterID string, initialCAConfig api.CAConfig, raftCf
 				Manager: ca.GenerateJoinToken(rootCA),
 			},
 		},
+		ManagerUnlockKey: kek,
 	}
 }
 
@@ -1071,11 +1065,8 @@ func MaintainEncryptedPEMHeaders(headers map[string]string, oldKEK, newKEK []byt
 
 	case foundDEK && oldKEK == nil:
 		// if there is a DEK, it should be rotated since the DEK was previously not encrypted with a KEK
-		newDEK := make([]byte, 32)
-		_, err := rand.Read(newDEK)
-		if err != nil {
-			return err
-		}
+		newDEK := encryption.GenerateSecretKey()
+		var err error
 		if headers[defaultRaftDEKKeyPending], err = encodePEMHeaderValue(newDEK, newKEK); err != nil {
 			return err
 		}

@@ -69,21 +69,21 @@ func (s *Server) SetReconciliationRetryInterval(reconciliationRetryInterval time
 	s.reconciliationRetryInterval = reconciliationRetryInterval
 }
 
-// GetEncryptionConfig is responsible for returning the current unlock key used for encrypting TLS private keys and
+// GetUnlockKey is responsible for returning the current unlock key used for encrypting TLS private keys and
 // other at rest data.  Access to this RPC call should only be allowed via mutual TLS from managers.
-func (s *Server) GetEncryptionConfig(ctx context.Context, request *api.GetEncryptionConfigRequest) (*api.GetEncryptionConfigResponse, error) {
+func (s *Server) GetUnlockKey(ctx context.Context, request *api.GetUnlockKeyRequest) (*api.GetUnlockKeyResponse, error) {
 	log.G(ctx).WithFields(logrus.Fields{
-		"method": "GetEncryptionConfig",
+		"method": "GetUnlockKey",
 	})
 
-	var config *api.EncryptionConfig
+	var managerUnlockKey []byte
 	s.store.View(func(tx store.ReadTx) {
 		cluster := store.GetCluster(tx, s.securityConfig.ClientTLSCreds.Organization())
-		config = &cluster.Spec.EncryptionConfig
+		managerUnlockKey = cluster.ManagerUnlockKey
 	})
 
-	return &api.GetEncryptionConfigResponse{
-		EncryptionConfig: config,
+	return &api.GetUnlockKeyResponse{
+		UnlockKey: managerUnlockKey,
 	}, nil
 }
 
