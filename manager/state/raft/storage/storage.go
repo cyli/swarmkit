@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"crypto/subtle"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -14,7 +15,6 @@ import (
 	"github.com/coreos/etcd/snap"
 	"github.com/coreos/etcd/wal"
 	"github.com/coreos/etcd/wal/walpb"
-	"github.com/docker/swarmkit/api"
 	"github.com/docker/swarmkit/log"
 	"github.com/docker/swarmkit/manager/encryption"
 	"github.com/pkg/errors"
@@ -23,6 +23,18 @@ import (
 // ErrNoWAL is returned if there are no WALs on disk
 var ErrNoWAL = errors.New("no WAL present")
 
+type walSnapDirs struct {
+	wal  string
+	snap string
+}
+
+// the wal/snap directories in decreasing order of preference/version
+var versionedWalSnapDirs = []walSnapDirs{
+	{wal: "wal-v3-encrypted", snap: "snap-v3-encrypted"},
+	{wal: "wal-v3", snap: "snap-v3"},
+	{wal: "wal", snap: "snap"},
+}
+
 // EncryptedRaftLogger saves raft data to disk
 type EncryptedRaftLogger struct {
 	StateDir      string
@@ -30,23 +42,15 @@ type EncryptedRaftLogger struct {
 
 	// mutex is locked for writing only when we need to replace the wal object and snapshotter
 	// object, not when we're writing snapshots or wals (in which case it's locked for reading)
-	mu          sync.RWMutex
+	encoderMu   sync.RWMutex
 	wal         WAL
 	snapshotter Snapshotter
 }
 
-// RaftDataFromDisk is returned by BootstrapFromDisk
-type RaftDataFromDisk struct {
-	Snapshot  *raftpb.Snapshot
-	Metadata  []byte
-	HardState raftpb.HardState
-	Entries   []raftpb.Entry
-}
-
 // BootstrapFromDisk creates a new snapshotter and wal, and also reads the latest snapshot and WALs from disk
-func (e *EncryptedRaftLogger) BootstrapFromDisk(ctx context.Context) (*RaftDataFromDisk, error) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+func (e *EncryptedRaftLogger) BootstrapFromDisk(ctx context.Context) (*raftpb.Snapshot, WALDataFromDisk, error) {
+	e.encoderMu.Lock()
+	defer e.encoderMu.Unlock()
 
 	walDir := e.walDir()
 	snapDir := e.snapDir()
@@ -55,164 +59,180 @@ func (e *EncryptedRaftLogger) BootstrapFromDisk(ctx context.Context) (*RaftDataF
 	snapFactory := NewSnapFactory(encrypter, decrypter)
 
 	if !fileutil.Exist(snapDir) {
-		// If snapshots created by the etcd-v2 code exist, read the latest snapshot
-		// and write it encoded to the new path.  The new path prevents etc-v2 creating
-		// snapshots that are visible to us, but not encoded and out of sync with our
-		// WALs, after a downgrade.
-		legacySnapDir := e.legacySnapDir()
-		if fileutil.Exist(legacySnapDir) {
-			if err := MigrateSnapshot(legacySnapDir, snapDir, OriginalSnap, snapFactory); err != nil {
-				return nil, err
+		// If snapshots created by the etcd-v2 code exist, or by swarmkit development version,
+		// read the latest snapshot and write it encoded to the new path.  The new path
+		// prevents etc-v2 creating snapshots that are visible to us, but not encoded and
+		// out of sync with our WALs, after a downgrade.
+		for _, dirs := range versionedWalSnapDirs[1:] {
+			legacySnapDir := filepath.Join(e.StateDir, dirs.snap)
+			if fileutil.Exist(legacySnapDir) {
+				if err := MigrateSnapshot(legacySnapDir, snapDir, OriginalSnap, snapFactory); err != nil {
+					return nil, WALDataFromDisk{}, err
+				}
+				break
 			}
-		} else if err := os.MkdirAll(snapDir, 0700); err != nil {
-			return nil, errors.Wrap(err, "failed to create snapshot directory")
 		}
+	}
+	// ensure the new directory exists
+	if err := os.MkdirAll(snapDir, 0700); err != nil {
+		return nil, WALDataFromDisk{}, errors.Wrap(err, "failed to create snapshot directory")
 	}
 
 	var (
 		snapshotter Snapshotter
 		walObj      WAL
 		err         error
-		result      = &RaftDataFromDisk{}
 	)
 
 	// Create a snapshotter and load snapshot data
 	snapshotter = snapFactory.New(snapDir)
-	result.Snapshot, err = snapshotter.Load()
+	snapshot, err := snapshotter.Load()
 	if err != nil && err != snap.ErrNoSnapshot {
-		return nil, err
+		return nil, WALDataFromDisk{}, err
 	}
 
 	walFactory := NewWALFactory(encrypter, decrypter)
 	var walsnap walpb.Snapshot
-	if result.Snapshot != nil {
-		walsnap.Index = result.Snapshot.Metadata.Index
-		walsnap.Term = result.Snapshot.Metadata.Term
+	if snapshot != nil {
+		walsnap.Index = snapshot.Metadata.Index
+		walsnap.Term = snapshot.Metadata.Term
 	}
 
 	if !wal.Exist(walDir) {
+		var walExists bool
 		// If wals created by the etcd-v2 wal code exist, read the latest ones based
 		// on this snapshot and encode them to wals in the new path to avoid adding
 		// backwards-incompatible entries to those files.
-		legacyWALDir := e.legacyWALDir()
-		if !wal.Exist(legacyWALDir) {
-			return nil, ErrNoWAL
+		for _, dirs := range versionedWalSnapDirs[1:] {
+			legacyWALDir := filepath.Join(e.StateDir, dirs.wal)
+			if !wal.Exist(legacyWALDir) {
+				continue
+			}
+			if err = MigrateWALs(ctx, legacyWALDir, walDir, OriginalWAL, walFactory, walsnap); err != nil {
+				return nil, WALDataFromDisk{}, err
+			}
+			walExists = true
+			break
 		}
-
-		if err = MigrateWALs(legacyWALDir, walDir, OriginalWAL, walFactory, walsnap, log.G(ctx)); err != nil {
-			return nil, err
+		if !walExists {
+			return nil, WALDataFromDisk{}, ErrNoWAL
 		}
 	}
 
-	walObj, result.Metadata, result.HardState, result.Entries, err = ReadRepairWAL(walDir, walsnap, walFactory, log.G(ctx))
+	walObj, waldata, err := ReadRepairWAL(ctx, walDir, walsnap, walFactory)
 	if err != nil {
-		return nil, err
+		return nil, WALDataFromDisk{}, err
 	}
 
 	e.snapshotter = snapshotter
 	e.wal = walObj
 
-	return result, nil
+	return snapshot, waldata, nil
 }
 
 // BootstrapNew creates a new snapshotter and WAL writer, expecting that there is nothing on disk
-func (e *EncryptedRaftLogger) BootstrapNew(raftNode *api.RaftMember) ([]byte, error) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+func (e *EncryptedRaftLogger) BootstrapNew(metadata []byte) error {
+	e.encoderMu.Lock()
+	defer e.encoderMu.Unlock()
 	encrypter, decrypter := encryption.Defaults(e.EncryptionKey)
 	walFactory := NewWALFactory(encrypter, decrypter)
 
 	for _, dirpath := range []string{e.walDir(), e.snapDir()} {
 		if err := os.MkdirAll(dirpath, 0700); err != nil {
-			return nil, errors.Wrap(err, "failed to create WAL directory")
+			return errors.Wrapf(err, "failed to create %s", dirpath)
 		}
 	}
-
-	metadata, err := raftNode.Marshal()
-	if err != nil {
-		return nil, errors.Wrap(err, "error marshalling raft node")
-	}
+	var err error
 	e.wal, err = walFactory.Create(e.walDir(), metadata)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to create WAL")
+		return errors.Wrap(err, "failed to create WAL")
 	}
 
 	e.snapshotter = NewSnapFactory(encrypter, decrypter).New(e.snapDir())
-	return metadata, nil
-}
-
-func (e *EncryptedRaftLogger) legacyWALDir() string {
-	return filepath.Join(e.StateDir, "wal")
+	return nil
 }
 
 func (e *EncryptedRaftLogger) walDir() string {
-	return filepath.Join(e.StateDir, "wal-v3")
-}
-
-func (e *EncryptedRaftLogger) legacySnapDir() string {
-	return filepath.Join(e.StateDir, "snap")
+	return filepath.Join(e.StateDir, versionedWalSnapDirs[0].wal)
 }
 
 func (e *EncryptedRaftLogger) snapDir() string {
-	return filepath.Join(e.StateDir, "snap-v3")
+	return filepath.Join(e.StateDir, versionedWalSnapDirs[0].snap)
+}
+
+// This is meant to be called by `SaveSnapshot` - we grab a write lock on the
+// encoder mutex, rotate the encoder/decoder out from under the WAL, and then
+// release the write lock. From then on, we can start writing the snapshot
+// and the rest of the WALs with only a read lock and the new encoders.  This way
+// we end up with all the WALs between 2 snapshots encrypted the same way.
+func (e *EncryptedRaftLogger) rotateEncoders(walsnap walpb.Snapshot, newKey []byte) error {
+	e.encoderMu.Lock()
+	defer e.encoderMu.Unlock()
+
+	if e.wal == nil { // if the wal exists, the snapshotter exists
+		return fmt.Errorf("raft WAL has either been closed or has never been created")
+	}
+
+	encrypter, decrypter := encryption.Defaults(newKey)
+
+	// We don't want to have to close the WAL, because we can't open a new one.
+	// We need to know the previous snapshot, because when you open a WAL you
+	// have to read out all the entries from a particular snapshot, or you can't
+	// write.  So just rotate the encoders out from under it.  We already
+	// have a lock on writing to snapshots and WALs.
+	wrapped, ok := e.wal.(*wrappedWAL)
+	if !ok {
+		panic(fmt.Errorf("EncryptedRaftLogger's WAL is not a wrappedWAL"))
+	}
+
+	// preserve these in case we have to reset
+	oldEncrypter := wrapped.encrypter
+	oldDecrypter := wrapped.decrypter
+
+	// rotate to the new encoder and decoder
+	wrapped.encrypter = encrypter
+	wrapped.decrypter = decrypter
+
+	if err := e.wal.SaveSnapshot(walsnap); err != nil {
+		// nope, error, reset
+		wrapped.encrypter = oldEncrypter
+		wrapped.decrypter = oldDecrypter
+		return err
+	}
+	e.snapshotter = NewSnapFactory(encrypter, decrypter).New(e.snapDir())
+	e.EncryptionKey = newKey
+	return nil
 }
 
 // SaveSnapshot actually saves a given snapshot - if a new key is provided.  If a new key is provided, the key
 // is actually rotated - otherwise we always try to set the encrypters to our current encryption key
 func (e *EncryptedRaftLogger) SaveSnapshot(snapshot raftpb.Snapshot, newKey []byte) error {
-	err := func() error {
-		// we want a write lock instead so we can rotate the encryption key and
-		// ensure we save the WAL snapshot with the new encryption key - this way
-		// we end up with all the WALs between 2 snapshots encrypted the same
-		e.mu.Lock()
-		defer e.mu.Unlock()
-
-		if e.wal == nil { // if the wal exists, the snapshotter exists
-			return fmt.Errorf("raft WAL has either been closed or has never been created")
-		}
-
-		walsnap := walpb.Snapshot{
-			Index: snapshot.Metadata.Index,
-			Term:  snapshot.Metadata.Term,
-		}
-
-		if newKey == nil {
-			// never mind with rotating the encrypters - just save the WAL snapshot
-			return e.wal.SaveSnapshot(walsnap)
-		}
-
-		encrypter, decrypter := encryption.Defaults(newKey)
-		wrapped, ok := e.wal.(*wrappedWAL)
-		reset := func() {}
-		if ok {
-			// we don't want to have to close the WAL and bootstrap a new one,
-			// so just rotate the encrypters out from under it.  We already
-			// have a lock on writing to snapshots and WALs
-			oldEncrypter := wrapped.encrypter
-			oldDecrypter := wrapped.decrypter
-			reset = func() {
-				wrapped.encrypter = oldEncrypter
-				wrapped.decrypter = oldDecrypter
-			}
-			wrapped.encrypter = encrypter
-			wrapped.decrypter = decrypter
-
-		}
-		if err := e.wal.SaveSnapshot(walsnap); err != nil {
-			reset()
-			return err
-		}
-		e.snapshotter = NewSnapFactory(encrypter, decrypter).New(e.snapDir())
-		e.EncryptionKey = newKey
-		return nil
-	}()
-
-	if err != nil {
-		return err
+	walsnap := walpb.Snapshot{
+		Index: snapshot.Metadata.Index,
+		Term:  snapshot.Metadata.Term,
 	}
 
-	e.mu.RLock()
-	defer e.mu.RUnlock()
+	if newKey != nil {
+		if err := e.rotateEncoders(walsnap, newKey); err != nil {
+			return err
+		}
+		e.encoderMu.RLock()
+		defer e.encoderMu.RUnlock()
+
+		// just make sure rotateEncoders wasn't immediately called a second time with a different
+		// key, in which case this read lock may have been acquired after the second write lock
+		// was released
+		if subtle.ConstantTimeCompare(newKey, e.EncryptionKey) != 1 {
+			return fmt.Errorf("encryption key was rotated a second time - aborting this snapshot write")
+		}
+	} else {
+		// never mind with rotating anything - just grab an encoder read lock save everything
+		e.encoderMu.RLock()
+		defer e.encoderMu.RUnlock()
+		if err := e.wal.SaveSnapshot(walsnap); err != nil {
+			return err
+		}
+	}
 
 	if err := e.snapshotter.SaveSnap(snapshot); err != nil {
 		return err
@@ -324,8 +344,8 @@ func (e *EncryptedRaftLogger) GC(index uint64, term uint64, keepOldSnapshots uin
 
 // SaveEntries saves only entries to disk
 func (e *EncryptedRaftLogger) SaveEntries(st raftpb.HardState, entries []raftpb.Entry) error {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
+	e.encoderMu.RLock()
+	defer e.encoderMu.RUnlock()
 
 	if e.wal == nil {
 		return fmt.Errorf("raft WAL has either been closed or has never been created")
@@ -335,8 +355,8 @@ func (e *EncryptedRaftLogger) SaveEntries(st raftpb.HardState, entries []raftpb.
 
 // Close closes the logger - it will have to be bootstrapped again to start writing
 func (e *EncryptedRaftLogger) Close(ctx context.Context) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	e.encoderMu.Lock()
+	defer e.encoderMu.Unlock()
 
 	if e.wal != nil {
 		if err := e.wal.Close(); err != nil {
@@ -350,8 +370,8 @@ func (e *EncryptedRaftLogger) Close(ctx context.Context) {
 
 // Clear closes the existing WAL and moves away the WAL and snapshot.
 func (e *EncryptedRaftLogger) Clear(ctx context.Context) error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	e.encoderMu.Lock()
+	defer e.encoderMu.Unlock()
 
 	if e.wal != nil {
 		if err := e.wal.Close(); err != nil {

@@ -133,7 +133,8 @@ func MigrateSnapshot(oldDir, newDir string, oldFactory, newFactory SnapFactory) 
 	return os.Rename(tmpdirpath, newDir)
 }
 
-// ListSnapshots lists all the snapshot files in a particular directory
+// ListSnapshots lists all the snapshot files in a particular directory and returns
+// the snapshot files in reverse lexical order (newest first)
 func ListSnapshots(dirpath string) ([]string, error) {
 	dirents, err := ioutil.ReadDir(dirpath)
 	if err != nil {

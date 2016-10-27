@@ -411,7 +411,7 @@ func TestManagerLockUnlock(t *testing.T) {
 	encrypter, decrypter := encryption.Defaults(nowCurrentDEK)
 	// we can't use the raftLogger, because the WALs are still locked while the raft node is up.  And once we remove
 	// the manager, they'll be deleted.
-	snapshot, err := storage.NewSnapFactory(encrypter, decrypter).New(filepath.Join(stateDir, "raft", "snap-v3")).Load()
+	snapshot, err := storage.NewSnapFactory(encrypter, decrypter).New(filepath.Join(stateDir, "raft", "snap-v3-encrypted")).Load()
 	require.NoError(t, err)
 	require.NotNil(t, snapshot)
 

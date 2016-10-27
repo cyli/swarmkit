@@ -9,7 +9,6 @@ import (
 
 	"github.com/coreos/etcd/raft/raftpb"
 	"github.com/coreos/etcd/wal/walpb"
-	"github.com/docker/swarmkit/api"
 	"github.com/docker/swarmkit/manager/encryption"
 	"github.com/stretchr/testify/require"
 )
@@ -26,7 +25,7 @@ func TestRaftLoggerSaveSnapWithNewKey(t *testing.T) {
 		StateDir:      tempdir,
 		EncryptionKey: []byte("key1"),
 	}
-	_, err = logger.BootstrapNew(&api.RaftMember{})
+	err = logger.BootstrapNew([]byte("metadata"))
 	require.NoError(t, err)
 
 	snapshot := fakeSnapshotData
@@ -44,11 +43,11 @@ func TestRaftLoggerSaveSnapWithNewKey(t *testing.T) {
 		StateDir:      tempdir,
 		EncryptionKey: []byte("key2"),
 	}
-	results, err := logger.BootstrapFromDisk(ctx)
+	readSnap, waldata, err := logger.BootstrapFromDisk(ctx)
 	require.NoError(t, err)
-	require.NotNil(t, results)
-	require.Equal(t, snapshot, *results.Snapshot)
-	require.Equal(t, entries, results.Entries)
+	require.NotNil(t, snapshot)
+	require.Equal(t, snapshot, *readSnap)
+	require.Equal(t, entries, waldata.Entries)
 
 	// saving without a new key saves with the previous key
 	fakeSnapshotData.Metadata.Index += uint64(len(entries))
@@ -65,11 +64,11 @@ func TestRaftLoggerSaveSnapWithNewKey(t *testing.T) {
 		StateDir:      tempdir,
 		EncryptionKey: []byte("key2"),
 	}
-	results, err = logger.BootstrapFromDisk(ctx)
+	readSnap, waldata, err = logger.BootstrapFromDisk(ctx)
 	require.NoError(t, err)
-	require.NotNil(t, results)
-	require.Equal(t, snapshot, *results.Snapshot)
-	require.Equal(t, entries, results.Entries)
+	require.NotNil(t, snapshot)
+	require.Equal(t, snapshot, *readSnap)
+	require.Equal(t, entries, waldata.Entries)
 	logger.Close(ctx)
 }
 
@@ -82,7 +81,7 @@ func TestBootstrapFromDisk(t *testing.T) {
 		StateDir:      tempdir,
 		EncryptionKey: []byte("key1"),
 	}
-	_, err = logger.BootstrapNew(&api.RaftMember{})
+	err = logger.BootstrapNew([]byte("metadata"))
 	require.NoError(t, err)
 
 	// everything should be saved with "key1"
@@ -96,11 +95,10 @@ func TestBootstrapFromDisk(t *testing.T) {
 		StateDir:      tempdir,
 		EncryptionKey: []byte("key1"),
 	}
-	results, err := logger.BootstrapFromDisk(context.Background())
+	readSnap, waldata, err := logger.BootstrapFromDisk(context.Background())
 	require.NoError(t, err)
-	require.NotNil(t, results)
-	require.Nil(t, results.Snapshot)
-	require.Equal(t, entries, results.Entries)
+	require.Nil(t, readSnap)
+	require.Equal(t, entries, waldata.Entries)
 
 	// save a snapshot
 	snapshot := fakeSnapshotData
@@ -116,11 +114,11 @@ func TestBootstrapFromDisk(t *testing.T) {
 		StateDir:      tempdir,
 		EncryptionKey: []byte("key1"),
 	}
-	results, err = logger.BootstrapFromDisk(context.Background())
+	readSnap, waldata, err = logger.BootstrapFromDisk(context.Background())
 	require.NoError(t, err)
-	require.NotNil(t, results)
-	require.Equal(t, snapshot, *results.Snapshot)
-	require.Equal(t, entries, results.Entries)
+	require.NotNil(t, snapshot)
+	require.Equal(t, snapshot, *readSnap)
+	require.Equal(t, entries, waldata.Entries)
 }
 
 // Ensure that we can change encoding and not have a race condition
@@ -133,7 +131,7 @@ func TestRaftLoggerRace(t *testing.T) {
 		StateDir:      tempdir,
 		EncryptionKey: []byte("Hello"),
 	}
-	_, err = logger.BootstrapNew(&api.RaftMember{})
+	err = logger.BootstrapNew([]byte("metadata"))
 	require.NoError(t, err)
 
 	_, entries, _ := makeWALData(fakeSnapshotData.Metadata.Index, fakeSnapshotData.Metadata.Term)
@@ -141,6 +139,7 @@ func TestRaftLoggerRace(t *testing.T) {
 	done1 := make(chan error)
 	done2 := make(chan error)
 	done3 := make(chan error)
+	done4 := make(chan error)
 	go func() {
 		done1 <- logger.SaveSnapshot(fakeSnapshotData, nil)
 	}()
@@ -149,6 +148,9 @@ func TestRaftLoggerRace(t *testing.T) {
 	}()
 	go func() {
 		done3 <- logger.SaveSnapshot(fakeSnapshotData, []byte("Hello 2"))
+	}()
+	go func() {
+		done4 <- logger.SaveSnapshot(fakeSnapshotData, []byte("Hello 3"))
 	}()
 
 	err = <-done1
@@ -159,64 +161,88 @@ func TestRaftLoggerRace(t *testing.T) {
 
 	err = <-done3
 	require.NoError(t, err, "unable to rotate key")
+
+	err = <-done4
+	require.NoError(t, err, "unable to rotate key a second time")
 }
 
-func TestMigrateWAL(t *testing.T) {
+func TestMigrateToV3EncryptedForm(t *testing.T) {
 	t.Parallel()
 
 	tempdir, err := ioutil.TempDir("", "raft-storage")
 	require.NoError(t, err)
 	defer os.RemoveAll(tempdir)
 
-	// write some data
-	logger := EncryptedRaftLogger{
-		StateDir:      tempdir,
-		EncryptionKey: []byte("key"),
+	dek := []byte("key")
+
+	writeDataTo := func(suffix string, snapshot raftpb.Snapshot, walFactory WALFactory, snapFactory SnapFactory) []raftpb.Entry {
+		snapDir := filepath.Join(tempdir, "snap"+suffix)
+		walDir := filepath.Join(tempdir, "wal"+suffix)
+		for _, dirpath := range []string{snapDir, walDir} {
+			require.NoError(t, os.MkdirAll(dirpath, 0755))
+		}
+		require.NoError(t, snapFactory.New(snapDir).SaveSnap(snapshot))
+
+		_, entries, _ := makeWALData(snapshot.Metadata.Index, snapshot.Metadata.Term)
+		walWriter, err := walFactory.Create(walDir, []byte("metadata"))
+		require.NoError(t, err)
+		require.NoError(t, walWriter.SaveSnapshot(walpb.Snapshot{Index: snapshot.Metadata.Index, Term: snapshot.Metadata.Term}))
+		require.NoError(t, walWriter.Save(raftpb.HardState{}, entries))
+		require.NoError(t, walWriter.Close())
+		return entries
 	}
-	_, err = logger.BootstrapNew(&api.RaftMember{})
-	require.NoError(t, err)
 
-	snapshot := fakeSnapshotData
-
-	err = logger.SaveSnapshot(snapshot, nil)
-	require.NoError(t, err)
-	_, entries, _ := makeWALData(snapshot.Metadata.Index, snapshot.Metadata.Term)
-	err = logger.SaveEntries(raftpb.HardState{}, entries)
-	require.NoError(t, err)
-	logger.Close(context.Background())
-
-	encrypter, decrypters := encryption.Defaults([]byte("key"))
-
-	// Move and re-encode the WAL and snap directory so it looks like it was created by an old version
-	walDir := filepath.Join(tempdir, "wal-v3")
-	snapDir := filepath.Join(tempdir, "snap-v3")
-	require.NoError(t, MigrateWALs(
-		walDir, filepath.Join(tempdir, "wal"),
-		NewWALFactory(encrypter, decrypters), OriginalWAL,
-		walpb.Snapshot{Index: snapshot.Metadata.Index, Term: snapshot.Metadata.Term},
-		nil,
-	))
-	require.NoError(t, MigrateSnapshot(
-		snapDir, filepath.Join(tempdir, "snap"),
-		NewSnapFactory(encrypter, decrypters), OriginalSnap,
-	))
-	require.NoError(t, os.RemoveAll(walDir))
-	require.NoError(t, os.RemoveAll(snapDir))
-
-	// Now bootstrap from disk and check that everything gets migrated
-	logger = EncryptedRaftLogger{
-		StateDir:      tempdir,
-		EncryptionKey: []byte("key"),
+	requireLoadedData := func(expectedSnap raftpb.Snapshot, expectedEntries []raftpb.Entry) {
+		logger := EncryptedRaftLogger{
+			StateDir:      tempdir,
+			EncryptionKey: dek,
+		}
+		readSnap, waldata, err := logger.BootstrapFromDisk(context.Background())
+		require.NoError(t, err)
+		require.NotNil(t, readSnap)
+		require.Equal(t, expectedSnap, *readSnap)
+		require.Equal(t, expectedEntries, waldata.Entries)
+		logger.Close(context.Background())
 	}
-	results, err := logger.BootstrapFromDisk(context.Background())
-	require.NoError(t, err)
-	require.NotNil(t, results)
-	require.Equal(t, snapshot, *results.Snapshot)
-	require.Equal(t, entries, results.Entries)
 
-	_, err = os.Stat(walDir)
+	v2Snapshot := fakeSnapshotData
+	v3Snapshot := fakeSnapshotData
+	v3Snapshot.Metadata.Index += 100
+	v3Snapshot.Metadata.Term += 10
+	v3EncryptedSnapshot := fakeSnapshotData
+	v3EncryptedSnapshot.Metadata.Index += 200
+	v3EncryptedSnapshot.Metadata.Term += 20
+
+	encoder, decoders := encryption.Defaults(dek)
+	walFactory := NewWALFactory(encoder, decoders)
+	snapFactory := NewSnapFactory(encoder, decoders)
+
+	// generate both v2 and v3 unencrypted snapshot data directories, as well as an encrypted directory
+	v2Entries := writeDataTo("", v2Snapshot, OriginalWAL, OriginalSnap)
+	v3Entries := writeDataTo("-v3", v3Snapshot, OriginalWAL, OriginalSnap)
+	v3EncryptedEntries := writeDataTo("-v3-encrypted", v3EncryptedSnapshot, walFactory, snapFactory)
+
+	// bootstrap from disk - the encrypted directory exists, so we should just read from
+	// it instead of from the legacy directories
+	requireLoadedData(v3EncryptedSnapshot, v3EncryptedEntries)
+
+	// remove the newest dirs - should try to migrate from v3
+	require.NoError(t, os.RemoveAll(filepath.Join(tempdir, "snap-v3-encrypted")))
+	require.NoError(t, os.RemoveAll(filepath.Join(tempdir, "wal-v3-encrypted")))
+	requireLoadedData(v3Snapshot, v3Entries)
+	// it can recover from partial migrations
+	require.NoError(t, os.RemoveAll(filepath.Join(tempdir, "snap-v3-encrypted")))
+	requireLoadedData(v3Snapshot, v3Entries)
+	// v3 dirs still there
+	_, err = os.Stat(filepath.Join(tempdir, "snap-v3"))
+	require.NoError(t, err)
+	_, err = os.Stat(filepath.Join(tempdir, "wal-v3"))
 	require.NoError(t, err)
 
-	_, err = os.Stat(snapDir)
-	require.NoError(t, err)
+	// remove the v3 dirs - should try to migrate from v2
+	require.NoError(t, os.RemoveAll(filepath.Join(tempdir, "snap-v3-encrypted")))
+	require.NoError(t, os.RemoveAll(filepath.Join(tempdir, "wal-v3-encrypted")))
+	require.NoError(t, os.RemoveAll(filepath.Join(tempdir, "snap-v3")))
+	require.NoError(t, os.RemoveAll(filepath.Join(tempdir, "wal-v3")))
+	requireLoadedData(v2Snapshot, v2Entries)
 }

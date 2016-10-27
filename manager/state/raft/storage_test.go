@@ -40,7 +40,7 @@ func TestRaftSnapshot(t *testing.T) {
 
 	// None of the nodes should have snapshot files yet
 	for _, node := range nodes {
-		dirents, err := ioutil.ReadDir(filepath.Join(node.StateDir, "snap-v3"))
+		dirents, err := ioutil.ReadDir(filepath.Join(node.StateDir, "snap-v3-encrypted"))
 		assert.NoError(t, err)
 		assert.Len(t, dirents, 0)
 	}
@@ -59,7 +59,7 @@ func TestRaftSnapshot(t *testing.T) {
 	// All nodes should now have a snapshot file
 	for nodeID, node := range nodes {
 		assert.NoError(t, raftutils.PollFunc(clockSource, func() error {
-			dirents, err := ioutil.ReadDir(filepath.Join(node.StateDir, "snap-v3"))
+			dirents, err := ioutil.ReadDir(filepath.Join(node.StateDir, "snap-v3-encrypted"))
 			if err != nil {
 				return err
 			}
@@ -76,7 +76,7 @@ func TestRaftSnapshot(t *testing.T) {
 
 	// It should get a copy of the snapshot
 	assert.NoError(t, raftutils.PollFunc(clockSource, func() error {
-		dirents, err := ioutil.ReadDir(filepath.Join(nodes[4].StateDir, "snap-v3"))
+		dirents, err := ioutil.ReadDir(filepath.Join(nodes[4].StateDir, "snap-v3-encrypted"))
 		if err != nil {
 			return err
 		}
@@ -112,7 +112,7 @@ func TestRaftSnapshot(t *testing.T) {
 	// All nodes should have a snapshot under a *different* name
 	for nodeID, node := range nodes {
 		assert.NoError(t, raftutils.PollFunc(clockSource, func() error {
-			dirents, err := ioutil.ReadDir(filepath.Join(node.StateDir, "snap-v3"))
+			dirents, err := ioutil.ReadDir(filepath.Join(node.StateDir, "snap-v3-encrypted"))
 			if err != nil {
 				return err
 			}
@@ -157,7 +157,7 @@ func TestRaftSnapshotRestart(t *testing.T) {
 
 	// Remaining nodes shouldn't have snapshot files yet
 	for _, node := range []*raftutils.TestNode{nodes[1], nodes[2]} {
-		dirents, err := ioutil.ReadDir(filepath.Join(node.StateDir, "snap-v3"))
+		dirents, err := ioutil.ReadDir(filepath.Join(node.StateDir, "snap-v3-encrypted"))
 		assert.NoError(t, err)
 		assert.Len(t, dirents, 0)
 	}
@@ -170,7 +170,7 @@ func TestRaftSnapshotRestart(t *testing.T) {
 	// Remaining nodes should now have a snapshot file
 	for nodeIdx, node := range []*raftutils.TestNode{nodes[1], nodes[2]} {
 		assert.NoError(t, raftutils.PollFunc(clockSource, func() error {
-			dirents, err := ioutil.ReadDir(filepath.Join(node.StateDir, "snap-v3"))
+			dirents, err := ioutil.ReadDir(filepath.Join(node.StateDir, "snap-v3-encrypted"))
 			if err != nil {
 				return err
 			}
@@ -192,7 +192,7 @@ func TestRaftSnapshotRestart(t *testing.T) {
 
 	// New node should get a copy of the snapshot
 	assert.NoError(t, raftutils.PollFunc(clockSource, func() error {
-		dirents, err := ioutil.ReadDir(filepath.Join(nodes[5].StateDir, "snap-v3"))
+		dirents, err := ioutil.ReadDir(filepath.Join(nodes[5].StateDir, "snap-v3-encrypted"))
 		if err != nil {
 			return err
 		}
@@ -202,7 +202,7 @@ func TestRaftSnapshotRestart(t *testing.T) {
 		return nil
 	}))
 
-	dirents, err := ioutil.ReadDir(filepath.Join(nodes[5].StateDir, "snap-v3"))
+	dirents, err := ioutil.ReadDir(filepath.Join(nodes[5].StateDir, "snap-v3-encrypted"))
 	assert.NoError(t, err)
 	assert.Len(t, dirents, 1)
 	raftutils.CheckValuesOnNodes(t, clockSource, map[uint64]*raftutils.TestNode{1: nodes[1], 2: nodes[2]}, nodeIDs[:5], values[:5])
@@ -273,7 +273,7 @@ func TestGCWAL(t *testing.T) {
 	// Snapshot should have been triggered just as the WAL rotated, so
 	// both WAL files should be preserved
 	assert.NoError(t, raftutils.PollFunc(clockSource, func() error {
-		dirents, err := ioutil.ReadDir(filepath.Join(nodes[1].StateDir, "snap-v3"))
+		dirents, err := ioutil.ReadDir(filepath.Join(nodes[1].StateDir, "snap-v3-encrypted"))
 		if err != nil {
 			return err
 		}
@@ -281,7 +281,7 @@ func TestGCWAL(t *testing.T) {
 			return fmt.Errorf("expected 1 snapshot, found %d", len(dirents))
 		}
 
-		dirents, err = ioutil.ReadDir(filepath.Join(nodes[1].StateDir, "wal-v3"))
+		dirents, err = ioutil.ReadDir(filepath.Join(nodes[1].StateDir, "wal-v3-encrypted"))
 		if err != nil {
 			return err
 		}
@@ -313,7 +313,7 @@ func TestGCWAL(t *testing.T) {
 
 	// This time only one WAL file should be saved.
 	assert.NoError(t, raftutils.PollFunc(clockSource, func() error {
-		dirents, err := ioutil.ReadDir(filepath.Join(nodes[1].StateDir, "snap-v3"))
+		dirents, err := ioutil.ReadDir(filepath.Join(nodes[1].StateDir, "snap-v3-encrypted"))
 		if err != nil {
 			return err
 		}
@@ -322,7 +322,7 @@ func TestGCWAL(t *testing.T) {
 			return fmt.Errorf("expected 1 snapshot, found %d", len(dirents))
 		}
 
-		dirents, err = ioutil.ReadDir(filepath.Join(nodes[1].StateDir, "wal-v3"))
+		dirents, err = ioutil.ReadDir(filepath.Join(nodes[1].StateDir, "wal-v3-encrypted"))
 		if err != nil {
 			return err
 		}
@@ -502,9 +502,8 @@ func TestRaftEncryptionKeyRotation(t *testing.T) {
 	rotator.RotationNotify() <- struct{}{}
 
 	// the rotation should trigger a snapshot, which should notify the rotator when it's done
-	var snapshotname string
 	require.NoError(t, raftutils.PollFunc(clockSource, func() error {
-		dirents, err := ioutil.ReadDir(filepath.Join(nodes[1].StateDir, "snap-v3"))
+		dirents, err := ioutil.ReadDir(filepath.Join(nodes[1].StateDir, "snap-v3-encrypted"))
 		if err != nil {
 			return err
 		}
@@ -514,7 +513,6 @@ func TestRaftEncryptionKeyRotation(t *testing.T) {
 		if rotator.GetNewKey() != nil {
 			return fmt.Errorf("rotation never finished")
 		}
-		snapshotname = dirents[0].Name()
 		return nil
 	}))
 	raftutils.CheckValuesOnNodes(t, clockSource, nodes, nodeIDs[:3], values[:3])
@@ -547,7 +545,7 @@ func TestRaftEncryptionKeyRotation(t *testing.T) {
 	time.Sleep(250 * time.Millisecond)
 
 	// snapshot has not been recreated
-	_, err = ioutil.ReadDir(filepath.Join(nodes[1].StateDir, "snap-v3"))
+	_, err = ioutil.ReadDir(filepath.Join(nodes[1].StateDir, "snap-v3-encrypted"))
 	require.True(t, os.IsNotExist(err))
 
 	require.NotNil(t, rotator.GetNewKey())

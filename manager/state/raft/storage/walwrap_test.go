@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -238,9 +239,9 @@ func TestReadRepairWAL(t *testing.T) {
 	require.Error(t, err)
 	require.NoError(t, ogWAL.Close())
 
-	ogWAL, meta, _, _, err := ReadRepairWAL(tempdir, snapshot, OriginalWAL, nil)
+	ogWAL, waldata, err := ReadRepairWAL(context.Background(), tempdir, snapshot, OriginalWAL)
 	require.NoError(t, err)
-	require.Equal(t, metadata, meta)
+	require.Equal(t, metadata, waldata.Metadata)
 	require.NoError(t, ogWAL.Close())
 }
 
@@ -266,7 +267,7 @@ func TestMigrateWALs(t *testing.T) {
 	oldDir := origDir
 	newDir := dirs[0]
 
-	err = MigrateWALs(oldDir, newDir, OriginalWAL, c, snapshot, nil)
+	err = MigrateWALs(context.Background(), oldDir, newDir, OriginalWAL, c, snapshot)
 	require.NoError(t, err)
 
 	newWAL, err := c.Open(newDir, snapshot)
@@ -281,7 +282,7 @@ func TestMigrateWALs(t *testing.T) {
 	oldDir = dirs[0]
 	newDir = dirs[1]
 
-	err = MigrateWALs(oldDir, newDir, c, OriginalWAL, snapshot, nil)
+	err = MigrateWALs(context.Background(), oldDir, newDir, c, OriginalWAL, snapshot)
 	require.NoError(t, err)
 
 	newWAL, err = OriginalWAL.Open(newDir, snapshot)

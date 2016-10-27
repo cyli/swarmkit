@@ -17,26 +17,26 @@ var errNoWAL = errors.New("no WAL present")
 
 // bootstraps a node's raft store from the raft logs and snapshots on disk
 func (n *Node) loadAndStart(ctx context.Context, forceNewCluster bool) error {
-	results, err := n.raftLogger.BootstrapFromDisk(ctx)
+	snapshot, waldata, err := n.raftLogger.BootstrapFromDisk(ctx)
 	if err != nil {
 		return err
 	}
 
-	if results.Snapshot != nil {
+	if snapshot != nil {
 		// Load the snapshot data into the store
-		if err := n.restoreFromSnapshot(results.Snapshot.Data, forceNewCluster); err != nil {
+		if err := n.restoreFromSnapshot(snapshot.Data, forceNewCluster); err != nil {
 			return err
 		}
 	}
 
 	// Read logs to fully catch up store
 	var raftNode api.RaftMember
-	if err := raftNode.Unmarshal(results.Metadata); err != nil {
+	if err := raftNode.Unmarshal(waldata.Metadata); err != nil {
 		return errors.Wrap(err, "failed to unmarshal WAL metadata")
 	}
 	n.Config.ID = raftNode.RaftID
 
-	ents, st := results.Entries, results.HardState
+	ents, st := waldata.Entries, waldata.HardState
 
 	// All members that are no longer part of the cluster must be added to
 	// the removed list right away, so that we don't try to connect to them
@@ -65,7 +65,7 @@ func (n *Node) loadAndStart(ctx context.Context, forceNewCluster bool) error {
 		}
 
 		// force append the configuration change entries
-		toAppEnts := createConfigChangeEnts(getIDs(results.Snapshot, ents), uint64(n.Config.ID), st.Term, st.Commit)
+		toAppEnts := createConfigChangeEnts(getIDs(snapshot, ents), uint64(n.Config.ID), st.Term, st.Commit)
 
 		// All members that are being removed as part of the
 		// force-new-cluster process must be added to the
@@ -95,8 +95,8 @@ func (n *Node) loadAndStart(ctx context.Context, forceNewCluster bool) error {
 		}
 	}
 
-	if results.Snapshot != nil {
-		if err := n.raftStore.ApplySnapshot(*results.Snapshot); err != nil {
+	if snapshot != nil {
+		if err := n.raftStore.ApplySnapshot(*snapshot); err != nil {
 			return err
 		}
 	}
@@ -112,8 +112,11 @@ func (n *Node) newRaftLogs(nodeID string) (raft.Peer, error) {
 		NodeID: nodeID,
 		Addr:   n.opts.Addr,
 	}
-	metadata, err := n.raftLogger.BootstrapNew(raftNode)
+	metadata, err := raftNode.Marshal()
 	if err != nil {
+		return raft.Peer{}, errors.Wrap(err, "error marshalling raft node")
+	}
+	if err := n.raftLogger.BootstrapNew(metadata); err != nil {
 		return raft.Peer{}, err
 	}
 	n.cluster.AddMember(&membership.Member{RaftMember: raftNode})
