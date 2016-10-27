@@ -23,7 +23,6 @@ import (
 	"github.com/docker/distribution/digest"
 	"github.com/docker/go-events"
 	"github.com/docker/swarmkit/api"
-	"github.com/docker/swarmkit/identity"
 	"github.com/docker/swarmkit/ioutils"
 	"github.com/docker/swarmkit/remotes"
 	"github.com/pkg/errors"
@@ -412,11 +411,9 @@ func ensureCertKeyMatch(cert *x509.Certificate, key crypto.PublicKey) error {
 
 // GetLocalRootCA validates if the contents of the file are a valid self-signed
 // CA certificate, and returns the PEM-encoded Certificate if so
-func GetLocalRootCA(baseDir string) (RootCA, error) {
-	paths := NewConfigPaths(baseDir)
-
+func GetLocalRootCA(paths CertPaths) (RootCA, error) {
 	// Check if we have a Certificate file
-	cert, err := ioutil.ReadFile(paths.RootCA.Cert)
+	cert, err := ioutil.ReadFile(paths.Cert)
 	if err != nil {
 		if os.IsNotExist(err) {
 			err = ErrNoLocalRootCA
@@ -425,7 +422,7 @@ func GetLocalRootCA(baseDir string) (RootCA, error) {
 		return RootCA{}, err
 	}
 
-	key, err := ioutil.ReadFile(paths.RootCA.Key)
+	key, err := ioutil.ReadFile(paths.Key)
 	if err != nil {
 		if !os.IsNotExist(err) {
 			return RootCA{}, err
@@ -512,9 +509,9 @@ func GetRemoteCA(ctx context.Context, d digest.Digest, r remotes.Remotes) (RootC
 	return RootCA{Cert: response.Certificate, Digest: digest.FromBytes(response.Certificate), Pool: pool}, nil
 }
 
-// CreateAndWriteRootCA creates a Certificate authority for a new Swarm Cluster, potentially
+// CreateRootCA creates a Certificate authority for a new Swarm Cluster, potentially
 // overwriting any existing CAs.
-func CreateAndWriteRootCA(rootCN string, paths CertPaths) (RootCA, error) {
+func CreateRootCA(rootCN string, paths CertPaths) (RootCA, error) {
 	// Create a simple CSR for the CA using the default CA validator and policy
 	req := cfcsr.CertificateRequest{
 		CN:         rootCN,
@@ -528,58 +525,17 @@ func CreateAndWriteRootCA(rootCN string, paths CertPaths) (RootCA, error) {
 		return RootCA{}, err
 	}
 
-	// TODO (cyli):  for backwards compatibility, we are writing the key to disk
-	// unencrypted.  We may want to just not write the key to disk at all.
-	if err := NewKeyReadWriter(paths, nil, nil).Write(cert, key, nil); err != nil {
+	rootCA, err := NewRootCA(cert, key, DefaultNodeCertExpiration)
+	if err != nil {
 		return RootCA{}, err
 	}
 
-	return NewRootCA(cert, key, DefaultNodeCertExpiration)
-}
-
-// BootstrapCluster receives a directory and creates both new Root CA key material
-// and a ManagerRole key/certificate pair to be used by the initial cluster manager
-func BootstrapCluster(baseCertDir string, kek []byte, headerUpdater KeyHeaderUpdater) error {
-	paths := NewConfigPaths(baseCertDir)
-
-	rootCA, err := CreateAndWriteRootCA(rootCN, paths.RootCA)
-	if err != nil {
-		return err
+	// save the cert to disk
+	if err := saveRootCA(rootCA, paths); err != nil {
+		return RootCA{}, err
 	}
 
-	nodeID := identity.NewID()
-	newOrg := identity.NewID()
-	_, err = GenerateAndSignNewTLSCert(rootCA, nodeID, ManagerRole, newOrg, NewKeyReadWriter(paths.Node, kek, headerUpdater))
-	return err
-}
-
-// GenerateAndSignNewTLSCert creates a new keypair, signs the certificate using signer,
-// and saves the certificate and key to disk. This method is used to bootstrap the first
-// manager TLS certificates.
-func GenerateAndSignNewTLSCert(rootCA RootCA, cn, ou, org string, kw KeyWriter) (*tls.Certificate, error) {
-	// Generate and new keypair and CSR
-	csr, key, err := GenerateNewCSR()
-	if err != nil {
-		return nil, err
-	}
-
-	// Obtain a signed Certificate
-	certChain, err := rootCA.ParseValidateAndSignCSR(csr, cn, ou, org)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to sign node certificate")
-	}
-
-	// Load a valid tls.Certificate from the chain and the key
-	serverCert, err := tls.X509KeyPair(certChain, key)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := kw.Write(certChain, key, nil); err != nil {
-		return nil, err
-	}
-
-	return &serverCert, nil
+	return rootCA, nil
 }
 
 // GetRemoteSignedCertificate submits a CSR to a remote CA server address,
@@ -660,10 +616,10 @@ func GetRemoteSignedCertificate(ctx context.Context, csr []byte, token string, r
 }
 
 // readCertValidity returns the certificate issue and expiration time
-func readCertValidity(paths CertPaths) (time.Time, time.Time, error) {
+func readCertValidity(kr KeyReader) (time.Time, time.Time, error) {
 	var zeroTime time.Time
 	// Read the Cert
-	cert, err := ioutil.ReadFile(paths.Cert)
+	cert, _, err := kr.Read()
 	if err != nil {
 		return zeroTime, zeroTime, err
 	}

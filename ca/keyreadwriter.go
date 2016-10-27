@@ -30,6 +30,7 @@ type KeyHeaderUpdater func(map[string]string, []byte, []byte) error
 type KeyReader interface {
 	Read() ([]byte, []byte, error)
 	ReadHeaders() (map[string]string, []byte, error)
+	Target() string
 }
 
 // KeyWriter writes a TLS key and cert to disk
@@ -37,6 +38,7 @@ type KeyWriter interface {
 	Write([]byte, []byte, *KEKUpdate) error
 	UpdateHeaders(cb func(map[string]string, []byte) error) error
 	RotateKEK(newKEK []byte) error
+	Target() string
 }
 
 // KEKUpdate provides an optional update to the kek when writing.  The structure
@@ -173,6 +175,12 @@ func (k *KeyReadWriter) Write(certBytes, plaintextKeyBytes []byte, kekUpdate *KE
 	}
 	k.kek = useKEK
 	return ioutils.AtomicWriteFile(k.paths.Cert, certBytes, certPerms)
+}
+
+// Target returns a string representation of this KeyReadWriter, namely where
+// it is writing to
+func (k *KeyReadWriter) Target() string {
+	return k.paths.Cert
 }
 
 func (k *KeyReadWriter) readKeyblock() (*pem.Block, error) {

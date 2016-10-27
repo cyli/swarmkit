@@ -331,7 +331,7 @@ func createClusterObject(t *testing.T, s *store.MemoryStore, clusterID, workerTo
 }
 
 // createAndWriteRootCA creates a Certificate authority for a new Swarm Cluster.
-// We're copying ca.CreateAndWriteRootCA, so we can have smaller key-sizes for tests
+// We're copying ca.CreateRootCA, so we can have smaller key-sizes for tests
 func createAndWriteRootCA(rootCN string, paths ca.CertPaths, expiry time.Duration) (ca.RootCA, error) {
 	// Create a simple CSR for the CA using the default CA validator and policy
 	req := cfcsr.CertificateRequest{

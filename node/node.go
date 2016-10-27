@@ -2,6 +2,7 @@ package node
 
 import (
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"io/ioutil"
 	"net"
@@ -35,6 +36,10 @@ const stateFilename = "state.json"
 var (
 	errNodeStarted    = errors.New("node: already started")
 	errNodeNotStarted = errors.New("node: not started")
+	certDirectory     = "certificates"
+
+	// ErrInvalidUnlockKey is returned when we can't decrypt the TLS certificate
+	ErrInvalidUnlockKey = errors.New("node is locked, and needs a valid unlock key")
 )
 
 // Config provides values for a Node.
@@ -164,9 +169,6 @@ func New(c *Config) (*Node, error) {
 	}
 	n.roleCond = sync.NewCond(n.RLocker())
 	n.connCond = sync.NewCond(n.RLocker())
-	if err := n.loadCertificates(); err != nil {
-		return nil, err
-	}
 	return n, nil
 }
 
@@ -200,14 +202,6 @@ func (n *Node) run(ctx context.Context) (err error) {
 		}
 	}()
 
-	// NOTE: When this node is created by NewNode(), our nodeID is set if
-	// n.loadCertificates() succeeded in loading TLS credentials from disk.
-	if n.config.JoinAddr == "" && n.nodeID == "" {
-		if err := n.bootstrapCA(); err != nil {
-			return err
-		}
-	}
-
 	if n.config.JoinAddr != "" || n.config.ForceNewCluster {
 		n.remotes = newPersistentRemotes(filepath.Join(n.config.StateDir, stateFilename))
 		if n.config.JoinAddr != "" {
@@ -215,36 +209,11 @@ func (n *Node) run(ctx context.Context) (err error) {
 		}
 	}
 
-	// Obtain new certs and setup TLS certificates renewal for this node:
-	// - We call LoadOrCreateSecurityConfig which blocks until a valid certificate has been issued
-	// - We retrieve the nodeID from LoadOrCreateSecurityConfig through the info channel. This allows
-	// us to display the ID before the certificate gets issued (for potential approval).
-	// - We wait for LoadOrCreateSecurityConfig to finish since we need a certificate to operate.
-	// - Given a valid certificate, spin a renewal go-routine that will ensure that certificates stay
-	// up to date.
-	issueResponseChan := make(chan api.IssueNodeCertificateResponse, 1)
-	go func() {
-		select {
-		case <-ctx.Done():
-		case resp := <-issueResponseChan:
-			log.G(log.WithModule(ctx, "tls")).WithFields(logrus.Fields{
-				"node.id": resp.NodeID,
-			}).Debugf("requesting certificate")
-			n.Lock()
-			n.nodeID = resp.NodeID
-			n.nodeMembership = resp.NodeMembership
-			n.Unlock()
-			close(n.certificateRequested)
-		}
-	}()
-
-	certDir := filepath.Join(n.config.StateDir, "certificates")
-	// LoadOrCreateSecurityConfig is the point at which a new node joining a cluster will retrieve TLS
-	// certificates and write them to disk
-	securityConfig, err := ca.LoadOrCreateSecurityConfig(
-		ctx, certDir, n.config.JoinToken, ca.ManagerRole, n.remotes, issueResponseChan,
-		n.unlockKey, manager.MaintainEncryptedPEMHeaders)
+	securityConfig, err := n.loadSecurityConfig(ctx)
 	if err != nil {
+		if err == x509.IncorrectPasswordError {
+			return ErrInvalidUnlockKey
+		}
 		return err
 	}
 
@@ -258,10 +227,6 @@ func (n *Node) run(ctx context.Context) (err error) {
 		return err
 	}
 	defer db.Close()
-
-	if err := n.loadCertificates(); err != nil {
-		return err
-	}
 
 	forceCertRenewal := make(chan struct{})
 	renewCert := func() {
@@ -304,7 +269,7 @@ func (n *Node) run(ctx context.Context) (err error) {
 		}
 	}()
 
-	updates := ca.RenewTLSConfig(ctx, securityConfig, certDir, n.remotes, forceCertRenewal)
+	updates := ca.RenewTLSConfig(ctx, securityConfig, n.remotes, forceCertRenewal)
 	go func() {
 		for {
 			select {
@@ -530,50 +495,73 @@ func (n *Node) Remotes() []api.Peer {
 	return remotes
 }
 
-func (n *Node) loadCertificates() error {
-	certDir := filepath.Join(n.config.StateDir, "certificates")
-	rootCA, err := ca.GetLocalRootCA(certDir)
-	if err != nil {
-		if err == ca.ErrNoLocalRootCA {
-			return nil
-		}
-		return err
-	}
-	configPaths := ca.NewConfigPaths(certDir)
-	krw := ca.NewKeyReadWriter(configPaths.Node, n.unlockKey, nil)
-	clientTLSCreds, _, err := ca.LoadTLSCreds(rootCA, krw)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
+func (n *Node) loadSecurityConfig(ctx context.Context) (*ca.SecurityConfig, error) {
+	paths := ca.NewConfigPaths(filepath.Join(n.config.StateDir, certDirectory))
 
-		return errors.Wrapf(err, "error while loading TLS Certificate in %s", configPaths.Node.Cert)
+	// Check if we already have a CA certificate on disk.
+	rootCA, err := ca.GetLocalRootCA(paths.RootCA)
+	switch {
+	case err == nil:
+		log.G(ctx).Debug("loaded CA certificate")
+	case err == ca.ErrNoLocalRootCA && n.config.JoinAddr == "":
+		// if we're not joining a cluster, bootstrap a new one - and we have to set the unlock key
+		n.unlockKey = nil
+		if n.config.AutoLockManagers {
+			n.unlockKey = encryption.GenerateSecretKey()
+		}
+		rootCA, err = ca.CreateRootCA(ca.DefaultRootCN, paths.RootCA)
+		if err != nil {
+			return nil, err
+		}
+		log.G(ctx).Debug("generated CA key and certificate")
+	case err == ca.ErrNoLocalRootCA:
+		log.G(ctx).WithError(err).Debugf("failed to load local CA certificate")
+		rootCA, err = ca.DownloadRootCA(ctx, paths.RootCA, n.config.JoinToken, n.remotes)
+		if err != nil {
+			return nil, err
+		}
 	}
-	// todo: try csr if no cert or store nodeID/role in some other way
+
+	// Obtain new certs and setup TLS certificates renewal for this node:
+	// - We call LoadOrCreateSecurityConfig which blocks until a valid certificate has been issued
+	// - We retrieve the nodeID from LoadOrCreateSecurityConfig through the info channel. This allows
+	// us to display the ID before the certificate gets issued (for potential approval).
+	// - We wait for LoadOrCreateSecurityConfig to finish since we need a certificate to operate.
+	// - Given a valid certificate, spin a renewal go-routine that will ensure that certificates stay
+	// up to date.
+	issueResponseChan := make(chan api.IssueNodeCertificateResponse, 1)
+	go func() {
+		select {
+		case <-ctx.Done():
+		case resp := <-issueResponseChan:
+			log.G(log.WithModule(ctx, "tls")).WithFields(logrus.Fields{
+				"node.id": resp.NodeID,
+			}).Debugf("requesting certificate")
+			n.Lock()
+			n.nodeID = resp.NodeID
+			n.nodeMembership = resp.NodeMembership
+			n.Unlock()
+			close(n.certificateRequested)
+		}
+	}()
+
+	krw := ca.NewKeyReadWriter(paths.Node, n.unlockKey, manager.MaintainEncryptedPEMHeaders)
+	// LoadOrCreateSecurityConfig is the point at which a new node joining a cluster will retrieve TLS
+	// certificates and write them to disk
+	securityConfig, err := ca.LoadOrCreateSecurityConfig(
+		ctx, rootCA, n.config.JoinToken, ca.ManagerRole, n.remotes, issueResponseChan, krw)
+	if err != nil {
+		return nil, err
+	}
+
 	n.Lock()
-	n.role = clientTLSCreds.Role()
-	n.nodeID = clientTLSCreds.NodeID()
+	n.role = securityConfig.ClientTLSCreds.Role()
+	n.nodeID = securityConfig.ClientTLSCreds.NodeID()
 	n.nodeMembership = api.NodeMembershipAccepted
 	n.roleCond.Broadcast()
 	n.Unlock()
 
-	return nil
-}
-
-func (n *Node) bootstrapCA() error {
-	// generate an unlock key, if it's required, overriding any provided unlock key
-	n.unlockKey = nil
-	if n.config.AutoLockManagers {
-		n.unlockKey = encryption.GenerateSecretKey()
-	}
-
-	if err := ca.BootstrapCluster(
-		filepath.Join(n.config.StateDir, "certificates"),
-		n.unlockKey,
-		manager.MaintainEncryptedPEMHeaders); err != nil {
-		return err
-	}
-	return n.loadCertificates()
+	return securityConfig, nil
 }
 
 func (n *Node) initManagerConnection(ctx context.Context, ready chan<- struct{}) error {

@@ -32,7 +32,8 @@ const (
 	nodeTLSKeyFilename  = "swarm-node.key"
 	nodeCSRFilename     = "swarm-node.csr"
 
-	rootCN = "swarm-ca"
+	// DefaultRootCN represents the root CN that we should create roots CAs with by default
+	DefaultRootCN = "swarm-ca"
 	// ManagerRole represents the Manager node type, and is used for authorization to endpoints
 	ManagerRole = "swarm-manager"
 	// WorkerRole represents the Worker node type, and is used for authorization to endpoints
@@ -198,72 +199,57 @@ func getCAHashFromToken(token string) (digest.Digest, error) {
 	return digest.ParseDigest(fmt.Sprintf("sha256:%0[1]*s", 64, digestInt.Text(16)))
 }
 
+// DownloadRootCA tries to retrieve a remote root CA and matches the digest against the provided token.
+func DownloadRootCA(ctx context.Context, paths CertPaths, token string, r remotes.Remotes) (RootCA, error) {
+	var rootCA RootCA
+	// Get a digest for the CA hash string that we've been provided.  Hash
+	// must be valid.
+	d, err := getCAHashFromToken(token)
+	if err != nil {
+		return RootCA{}, err
+	}
+
+	// Get the remote CA certificate, verify integrity with the
+	// hash provided. Retry up to 5 times, in case the manager we
+	// first try to contact is not responding properly (it may have
+	// just been demoted, for example).
+
+	for i := 0; i != 5; i++ {
+		rootCA, err = GetRemoteCA(ctx, d, r)
+		if err == nil {
+			break
+		}
+		log.G(ctx).WithError(err).Errorf("failed to retrieve remote root CA certificate")
+	}
+	if err != nil {
+		return RootCA{}, err
+	}
+
+	// Save root CA certificate to disk
+	if err = saveRootCA(rootCA, paths); err != nil {
+		return RootCA{}, err
+	}
+
+	log.G(ctx).Debugf("retrieved remote CA certificate: %s", paths.Cert)
+	return rootCA, nil
+}
+
 // LoadOrCreateSecurityConfig encapsulates the security logic behind joining a cluster.
 // Every node requires at least a set of TLS certificates with which to join the cluster with.
 // In the case of a manager, these certificates will be used both for client and server credentials.
-func LoadOrCreateSecurityConfig(ctx context.Context, baseCertDir, token, proposedRole string, remotes remotes.Remotes, nodeInfo chan<- api.IssueNodeCertificateResponse, kek []byte, headerUpdater KeyHeaderUpdater) (*SecurityConfig, error) {
+func LoadOrCreateSecurityConfig(ctx context.Context, rootCA RootCA, token, proposedRole string, remotes remotes.Remotes, nodeInfo chan<- api.IssueNodeCertificateResponse, krw *KeyReadWriter) (*SecurityConfig, error) {
 	ctx = log.WithModule(ctx, "tls")
-	paths := NewConfigPaths(baseCertDir)
-
-	var (
-		rootCA                         RootCA
-		serverTLSCreds, clientTLSCreds *MutableTLSCreds
-		err                            error
-	)
-
-	// Check if we already have a CA certificate on disk. We need a CA to have a valid SecurityConfig
-	rootCA, err = GetLocalRootCA(baseCertDir)
-	switch err {
-	case nil:
-		log.G(ctx).Debug("loaded CA certificate")
-	case ErrNoLocalRootCA:
-		log.G(ctx).WithError(err).Debugf("failed to load local CA certificate")
-
-		// Get a digest for the optional CA hash string that we've been provided
-		// If we were provided a non-empty string, and it is an invalid hash, return
-		// otherwise, allow the invalid digest through.
-		var d digest.Digest
-		if token != "" {
-			d, err = getCAHashFromToken(token)
-			if err != nil {
-				return nil, err
-			}
-		}
-
-		// Get the remote CA certificate, verify integrity with the
-		// hash provided. Retry up to 5 times, in case the manager we
-		// first try to contact is not responding properly (it may have
-		// just been demoted, for example).
-
-		for i := 0; i != 5; i++ {
-			rootCA, err = GetRemoteCA(ctx, d, remotes)
-			if err == nil {
-				break
-			}
-			log.G(ctx).WithError(err).Errorf("failed to retrieve remote root CA certificate")
-		}
-		if err != nil {
-			return nil, err
-		}
-
-		// Save root CA certificate to disk
-		if err = saveRootCA(rootCA, paths.RootCA); err != nil {
-			return nil, err
-		}
-
-		log.G(ctx).Debugf("retrieved remote CA certificate: %s", paths.RootCA.Cert)
-	default:
-		return nil, err
-	}
-
-	krw := NewKeyReadWriter(paths.Node, kek, headerUpdater)
 
 	// At this point we've successfully loaded the CA details from disk, or
 	// successfully downloaded them remotely. The next step is to try to
 	// load our certificates.
-	clientTLSCreds, serverTLSCreds, err = LoadTLSCreds(rootCA, krw)
+	clientTLSCreds, serverTLSCreds, err := LoadTLSCreds(rootCA, krw)
 	if err != nil {
-		log.G(ctx).WithError(err).Debugf("no node credentials found in: %s", paths.Node.Cert)
+		if err == x509.IncorrectPasswordError {
+			return nil, err
+		}
+
+		log.G(ctx).WithError(err).Debugf("no node credentials found in: %s", krw.Target())
 
 		var (
 			tlsKeyPair *tls.Certificate
@@ -318,7 +304,7 @@ func LoadOrCreateSecurityConfig(ctx context.Context, baseCertDir, token, propose
 		log.G(ctx).WithFields(logrus.Fields{
 			"node.id":   clientTLSCreds.NodeID(),
 			"node.role": clientTLSCreds.Role(),
-		}).Debugf("new node credentials generated: %s", paths.Node.Cert)
+		}).Debugf("new node credentials generated: %s", krw.Target())
 	} else {
 		if nodeInfo != nil {
 			nodeInfo <- api.IssueNodeCertificateResponse{
@@ -337,7 +323,7 @@ func LoadOrCreateSecurityConfig(ctx context.Context, baseCertDir, token, propose
 
 // RenewTLSConfigNow gets a new TLS cert and key, and updates the security config if provided.  This is similar to
 // RenewTLSConfig, except while that monitors for expiry, and periodically renews, this renews once and is blocking
-func RenewTLSConfigNow(ctx context.Context, s *SecurityConfig, r remotes.Remotes, updates chan CertificateUpdate) error {
+func RenewTLSConfigNow(ctx context.Context, s *SecurityConfig, r remotes.Remotes) error {
 	ctx = log.WithModule(ctx, "tls")
 	log := log.G(ctx).WithFields(logrus.Fields{
 		"node.id":   s.ClientTLSCreds.NodeID(),
@@ -354,34 +340,22 @@ func RenewTLSConfigNow(ctx context.Context, s *SecurityConfig, r remotes.Remotes
 		nil)
 	if err != nil {
 		log.WithError(err).Errorf("failed to renew the certificate")
-		if updates != nil {
-			updates <- CertificateUpdate{Err: err}
-		}
 		return err
 	}
 
 	clientTLSConfig, err := NewClientTLSConfig(tlsKeyPair, rootCA.Pool, CARole)
 	if err != nil {
 		log.WithError(err).Errorf("failed to create a new client config")
-		if updates != nil {
-			updates <- CertificateUpdate{Err: err}
-		}
 		return err
 	}
 	serverTLSConfig, err := NewServerTLSConfig(tlsKeyPair, rootCA.Pool)
 	if err != nil {
 		log.WithError(err).Errorf("failed to create a new server config")
-		if updates != nil {
-			updates <- CertificateUpdate{Err: err}
-		}
 		return err
 	}
 
 	if err = s.ClientTLSCreds.LoadNewTLSConfig(clientTLSConfig); err != nil {
 		log.WithError(err).Errorf("failed to update the client credentials")
-		if updates != nil {
-			updates <- CertificateUpdate{Err: err}
-		}
 		return err
 	}
 
@@ -395,22 +369,15 @@ func RenewTLSConfigNow(ctx context.Context, s *SecurityConfig, r remotes.Remotes
 
 	if err = s.ServerTLSCreds.LoadNewTLSConfig(serverTLSConfig); err != nil {
 		log.WithError(err).Errorf("failed to update the server TLS credentials")
-		if updates != nil {
-			updates <- CertificateUpdate{Err: err}
-		}
 		return err
 	}
 
-	if updates != nil {
-		updates <- CertificateUpdate{Role: s.ClientTLSCreds.Role()}
-	}
 	return nil
 }
 
 // RenewTLSConfig will continuously monitor for the necessity of renewing the local certificates, either by
 // issuing them locally if key-material is available, or requesting them from a remote CA.
-func RenewTLSConfig(ctx context.Context, s *SecurityConfig, baseCertDir string, remotes remotes.Remotes, renew <-chan struct{}) <-chan CertificateUpdate {
-	paths := NewConfigPaths(baseCertDir)
+func RenewTLSConfig(ctx context.Context, s *SecurityConfig, remotes remotes.Remotes, renew <-chan struct{}) <-chan CertificateUpdate {
 	updates := make(chan CertificateUpdate)
 
 	go func() {
@@ -428,10 +395,10 @@ func RenewTLSConfig(ctx context.Context, s *SecurityConfig, baseCertDir string, 
 			// Since the expiration of the certificate is managed remotely we should update our
 			// retry timer on every iteration of this loop.
 			// Retrieve the current certificate expiration information.
-			validFrom, validUntil, err := readCertValidity(paths.Node)
+			validFrom, validUntil, err := readCertValidity(s.KeyReader())
 			if err != nil {
 				// We failed to read the expiration, let's stick with the starting default
-				log.Errorf("failed to read the expiration of the TLS certificate in: %s", paths.Node.Cert)
+				log.Errorf("failed to read the expiration of the TLS certificate in: %s", s.KeyReader().Target())
 				updates <- CertificateUpdate{Err: errors.New("failed to read certificate expiration")}
 			} else {
 				// If we have an expired certificate, we let's stick with the starting default in
@@ -460,7 +427,11 @@ func RenewTLSConfig(ctx context.Context, s *SecurityConfig, baseCertDir string, 
 			}
 
 			// ignore errors - it will just try again laster
-			RenewTLSConfigNow(ctx, s, remotes, updates)
+			if err := RenewTLSConfigNow(ctx, s, remotes); err != nil {
+				updates <- CertificateUpdate{Err: err}
+			} else {
+				updates <- CertificateUpdate{Role: s.ClientTLSCreds.Role()}
+			}
 		}
 	}()
 

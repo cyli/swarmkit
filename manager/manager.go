@@ -576,7 +576,7 @@ func (m *Manager) watchForKEKChanges(ctx context.Context) {
 			case m.keyRotator.GetCurrentKEK() == nil:
 				// it was previously unencrypted, and now needs to be encrypted - trigger
 				// a full rotation of the TLS keys too
-				if err := ca.RenewTLSConfigNow(ctx, securityConfig, r, nil); err != nil {
+				if err := ca.RenewTLSConfigNow(ctx, securityConfig, r); err != nil {
 					continue
 				}
 				// Now that we have a new TLS certificate, let's load it from disk and
