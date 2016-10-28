@@ -80,7 +80,12 @@ func (s *Server) GetUnlockKey(ctx context.Context, request *api.GetUnlockKeyRequ
 	s.store.View(func(tx store.ReadTx) {
 		cluster := store.GetCluster(tx, s.securityConfig.ClientTLSCreds.Organization())
 		if cluster.Spec.EncryptionConfig.AutoLockManagers {
-			managerUnlockKey = cluster.UnlockKeys.Manager
+			for _, encryptionKey := range cluster.UnlockKeys {
+				if encryptionKey.Subsystem == ManagerRole {
+					managerUnlockKey = encryptionKey.Key
+					return
+				}
+			}
 		}
 	})
 

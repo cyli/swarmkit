@@ -715,11 +715,6 @@ message JoinTokens {
 	string manager = 2;
 }
 
-message UnlockKeys {
-	// Manager is the unlock key to decrypt manager TLS certs and data at rest
-	bytes manager = 1;
-}
-
 message RootCA {
 	// CAKey is the root CA private key.
 	bytes ca_key = 1 [(gogoproto.customname) = "CAKey"];

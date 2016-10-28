@@ -17,7 +17,7 @@ import (
 
 // get the unlock key
 
-func getNodeCAClient(cmd *cobra.Command) (api.NodeCAClient, error) {
+func getCAClient(cmd *cobra.Command) (api.CAClient, error) {
 	addr, err := cmd.Flags().GetString("socket")
 	if err != nil {
 		return nil, err
@@ -35,7 +35,7 @@ func getNodeCAClient(cmd *cobra.Command) (api.NodeCAClient, error) {
 		return nil, err
 	}
 
-	return api.NewNodeCAClient(conn), nil
+	return api.NewCAClient(conn), nil
 }
 
 var (
@@ -61,7 +61,7 @@ var (
 				return err
 			}
 
-			c2, err := getNodeCAClient(cmd)
+			c2, err := getCAClient(cmd)
 			if err != nil {
 				return err
 			}

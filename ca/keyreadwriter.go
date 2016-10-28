@@ -157,7 +157,7 @@ func (k *KeyReadWriter) Write(certBytes, plaintextKeyBytes []byte, kekUpdate *KE
 	// see if a key exists already - if so, pull out the headers
 	oldKeyBlock, err := k.readKeyblock()
 	if err == nil {
-		mergePEMHEaders(keyBlock.Headers, oldKeyBlock.Headers)
+		mergePEMHeaders(keyBlock.Headers, oldKeyBlock.Headers)
 	}
 
 	useKEK := k.kek
@@ -216,7 +216,7 @@ func (k *KeyReadWriter) readKey() (*pem.Block, error) {
 	}
 	// preserve headers minus PEM encryption headers
 	headers := make(map[string]string)
-	mergePEMHEaders(headers, keyBlock.Headers)
+	mergePEMHeaders(headers, keyBlock.Headers)
 	return &pem.Block{
 		Type:    keyBlock.Type, // the key type doesn't change
 		Bytes:   derBytes,
@@ -239,7 +239,7 @@ func (k *KeyReadWriter) writeKey(keyBlock *pem.Block, writeKEK []byte) error {
 		if encryptedPEMBlock.Headers == nil {
 			return errors.New("unable to encrypt key - invalid PEM file produced")
 		}
-		mergePEMHEaders(encryptedPEMBlock.Headers, keyBlock.Headers)
+		mergePEMHeaders(encryptedPEMBlock.Headers, keyBlock.Headers)
 		keyBlock = encryptedPEMBlock
 	}
 	return ioutils.AtomicWriteFile(k.paths.Key, pem.EncodeToMemory(keyBlock), keyPerms)
@@ -247,7 +247,7 @@ func (k *KeyReadWriter) writeKey(keyBlock *pem.Block, writeKEK []byte) error {
 
 // merges one set of PEM headers onto another, excepting for key encryption value
 // "proc-type" and "dek-info"
-func mergePEMHEaders(original, newSet map[string]string) {
+func mergePEMHeaders(original, newSet map[string]string) {
 	for key, value := range newSet {
 		normalizedKey := strings.TrimSpace(strings.ToLower(key))
 		if normalizedKey != "proc-type" && normalizedKey != "dek-info" {

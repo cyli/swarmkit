@@ -108,18 +108,25 @@ func (s *Server) UpdateCluster(ctx context.Context, request *api.UpdateClusterRe
 
 		expireBlacklistedCerts(cluster)
 
-		if request.Rotation.RotateWorkerToken {
+		if request.Rotation.WorkerJoinToken {
 			cluster.RootCA.JoinTokens.Worker = ca.GenerateJoinToken(s.rootCA)
 		}
-		if request.Rotation.RotateManagerToken {
+		if request.Rotation.ManagerJoinToken {
 			cluster.RootCA.JoinTokens.Manager = ca.GenerateJoinToken(s.rootCA)
 		}
+
+		// Note: we currently only support manager unlock keys, so just wipe
+		// out the whole field if we need to rotate.  If we ever support other
+		// keys in this field, we need to search for the appropriate subsystem.
 		if cluster.Spec.EncryptionConfig.AutoLockManagers {
-			if cluster.UnlockKeys.Manager == nil || request.UnlockRotation.RotateManagerKey {
-				cluster.UnlockKeys.Manager = encryption.GenerateSecretKey()
+			if len(cluster.UnlockKeys) == 0 || request.Rotation.ManagerUnlockKey {
+				cluster.UnlockKeys = []*api.EncryptionKey{{
+					Subsystem: ca.ManagerRole,
+					Key:       encryption.GenerateSecretKey(),
+				}}
 			}
 		} else {
-			cluster.UnlockKeys.Manager = nil
+			cluster.UnlockKeys = nil
 		}
 		return store.UpdateCluster(tx, cluster)
 	})

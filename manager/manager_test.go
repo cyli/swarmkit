@@ -153,7 +153,11 @@ func TestManager(t *testing.T) {
 		cluster = *clusters[0]
 	})
 	require.NotNil(t, cluster)
-	require.Equal(t, cluster.UnlockKeys.Manager, []byte("kek"))
+	require.Len(t, cluster.UnlockKeys, 1)
+	require.Equal(t, &api.EncryptionKey{
+		Subsystem: ca.ManagerRole,
+		Key:       []byte("kek"),
+	}, cluster.UnlockKeys[0])
 
 	// Test removal of the agent node
 	agentID := agentSecurityConfig.ClientTLSCreds.NodeID()
@@ -323,7 +327,7 @@ func TestManagerLockUnlock(t *testing.T) {
 		return nil
 	}, 1*time.Second))
 
-	require.Nil(t, cluster.UnlockKeys.Manager)
+	require.Nil(t, cluster.UnlockKeys)
 
 	// tls key is unencrypted, but there is a DEK
 	key, err := ioutil.ReadFile(tc.Paths.Node.Key)
@@ -342,7 +346,10 @@ func TestManagerLockUnlock(t *testing.T) {
 	require.NoError(t, m.raftNode.MemoryStore().Update(func(tx store.Tx) error {
 		latestCluster := store.GetCluster(tx, cluster.ID)
 		latestCluster.Spec.EncryptionConfig.AutoLockManagers = true
-		latestCluster.UnlockKeys.Manager = []byte("kek")
+		latestCluster.UnlockKeys = []*api.EncryptionKey{{
+			Key:       []byte("kek"),
+			Subsystem: ca.ManagerRole,
+		}}
 		return store.UpdateCluster(tx, latestCluster)
 	}))
 
@@ -418,7 +425,7 @@ func TestManagerLockUnlock(t *testing.T) {
 	// update the lock key to nil
 	require.NoError(t, m.raftNode.MemoryStore().Update(func(tx store.Tx) error {
 		latestCluster := store.GetCluster(tx, cluster.ID)
-		latestCluster.UnlockKeys.Manager = nil
+		latestCluster.UnlockKeys = nil
 		return store.UpdateCluster(tx, latestCluster)
 	}))
 

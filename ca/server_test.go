@@ -357,7 +357,7 @@ func TestGetUnlockKey(t *testing.T) {
 	tc := testutils.NewTestCA(t)
 	defer tc.Stop()
 
-	resp, err := tc.NodeCAClients[0].GetUnlockKey(context.Background(), &api.GetUnlockKeyRequest{})
+	resp, err := tc.CAClients[0].GetUnlockKey(context.Background(), &api.GetUnlockKeyRequest{})
 	assert.NoError(t, err)
 	assert.Nil(t, resp.UnlockKey)
 
@@ -365,11 +365,14 @@ func TestGetUnlockKey(t *testing.T) {
 	assert.NoError(t, tc.MemoryStore.Update(func(tx store.Tx) error {
 		clusters, _ := store.FindClusters(tx, store.ByName(store.DefaultClusterName))
 		clusters[0].Spec.EncryptionConfig.AutoLockManagers = true
-		clusters[0].UnlockKeys.Manager = []byte("secret")
+		clusters[0].UnlockKeys = []*api.EncryptionKey{{
+			Subsystem: ca.ManagerRole,
+			Key:       []byte("secret"),
+		}}
 		return store.UpdateCluster(tx, clusters[0])
 	}))
 
-	resp, err = tc.NodeCAClients[0].GetUnlockKey(context.Background(), &api.GetUnlockKeyRequest{})
+	resp, err = tc.CAClients[0].GetUnlockKey(context.Background(), &api.GetUnlockKeyRequest{})
 	assert.NoError(t, err)
 	assert.Equal(t, resp.UnlockKey, []byte("secret"))
 }

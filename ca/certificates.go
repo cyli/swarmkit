@@ -234,7 +234,7 @@ func (rca *RootCA) getKEKUpdate(ctx context.Context, cert *x509.Certificate, key
 		}
 		defer conn.Close()
 
-		client := api.NewNodeCAClient(conn)
+		client := api.NewCAClient(conn)
 		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 		response, err := client.GetUnlockKey(ctx, &api.GetUnlockKeyRequest{})

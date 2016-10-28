@@ -314,7 +314,10 @@ func TestRequestAndSaveNewCertificates(t *testing.T) {
 	assert.NoError(t, tc.MemoryStore.Update(func(tx store.Tx) error {
 		cluster := store.GetCluster(tx, tc.Organization)
 		cluster.Spec.EncryptionConfig.AutoLockManagers = true
-		cluster.UnlockKeys.Manager = []byte("kek!")
+		cluster.UnlockKeys = []*api.EncryptionKey{{
+			Subsystem: ca.ManagerRole,
+			Key:       []byte("kek!"),
+		}}
 		return store.UpdateCluster(tx, cluster)
 	}))
 	assert.NoError(t, os.RemoveAll(tc.Paths.Node.Cert))

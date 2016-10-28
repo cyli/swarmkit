@@ -236,7 +236,7 @@ message Cluster {
 	// manager TLS keys at rest and the raft encryption keys at rest.
 	// If the key is empty, the node will be unlocked (will not require a key
 	// to start up from a shut down state).
-	UnlockKeys unlock_keys = 9 [(gogoproto.nullable) = false];
+	repeated EncryptionKey unlock_keys = 9;
 }
 
 // Secret represents a secret that should be passed to a container or a node,

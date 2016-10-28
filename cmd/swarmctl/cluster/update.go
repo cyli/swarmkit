@@ -40,8 +40,7 @@ var (
 
 			flags := cmd.Flags()
 			spec := &cluster.Spec
-			var rotation api.JoinTokenRotation
-			var unlockRotation api.UnlockKeyRotation
+			var rotation api.KeyRotation
 
 			if flags.Changed("certexpiry") {
 				cePeriod, err := flags.GetDuration("certexpiry")
@@ -77,9 +76,9 @@ var (
 
 				switch rotateJoinToken {
 				case "worker":
-					rotation.RotateWorkerToken = true
+					rotation.WorkerJoinToken = true
 				case "manager":
-					rotation.RotateManagerToken = true
+					rotation.ManagerJoinToken = true
 				default:
 					return errors.New("--rotate-join-token flag must be followed by 'worker' or 'manager'")
 				}
@@ -90,9 +89,9 @@ var (
 					return err
 				}
 			}
-			rotateUnlockKey, err := flags.GetBool("otate-unlock-key")
+			rotateUnlockKey, err := flags.GetBool("rotate-unlock-key")
 			if err != nil {
-				unlockRotation.RotateManagerKey = rotateUnlockKey
+				rotation.ManagerUnlockKey = rotateUnlockKey
 			}
 
 			driver, err := common.ParseLogDriverFlags(flags)
@@ -106,7 +105,6 @@ var (
 				ClusterVersion: &cluster.Meta.Version,
 				Spec:           spec,
 				Rotation:       rotation,
-				UnlockRotation: unlockRotation,
 			})
 			if err != nil {
 				return err

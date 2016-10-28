@@ -245,8 +245,8 @@ func TestUpdateClusterRotateToken(t *testing.T) {
 		ClusterID:      cluster.ID,
 		Spec:           &cluster.Spec,
 		ClusterVersion: &cluster.Meta.Version,
-		Rotation: api.JoinTokenRotation{
-			RotateWorkerToken: true,
+		Rotation: api.KeyRotation{
+			WorkerJoinToken: true,
 		},
 	})
 	assert.NoError(t, err)
@@ -267,8 +267,8 @@ func TestUpdateClusterRotateToken(t *testing.T) {
 		ClusterID:      cluster.ID,
 		Spec:           &cluster.Spec,
 		ClusterVersion: &r.Clusters[0].Meta.Version,
-		Rotation: api.JoinTokenRotation{
-			RotateManagerToken: true,
+		Rotation: api.KeyRotation{
+			ManagerJoinToken: true,
 		},
 	})
 	assert.NoError(t, err)
@@ -289,9 +289,9 @@ func TestUpdateClusterRotateToken(t *testing.T) {
 		ClusterID:      cluster.ID,
 		Spec:           &cluster.Spec,
 		ClusterVersion: &r.Clusters[0].Meta.Version,
-		Rotation: api.JoinTokenRotation{
-			RotateWorkerToken:  true,
-			RotateManagerToken: true,
+		Rotation: api.KeyRotation{
+			WorkerJoinToken:  true,
+			ManagerJoinToken: true,
 		},
 	})
 	assert.NoError(t, err)
@@ -321,15 +321,15 @@ func TestUpdateClusterRotateUnlockKey(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, r.Clusters, 1)
 	require.False(t, r.Clusters[0].Spec.EncryptionConfig.AutoLockManagers)
-	require.Equal(t, api.UnlockKeys{}, r.Clusters[0].UnlockKeys) // redacted
+	require.Nil(t, r.Clusters[0].UnlockKeys) // redacted
 
 	// Rotate unlock key without turning auto-lock on - key should still be nil
 	_, err = ts.Client.UpdateCluster(context.Background(), &api.UpdateClusterRequest{
 		ClusterID:      cluster.ID,
 		Spec:           &cluster.Spec,
 		ClusterVersion: &r.Clusters[0].Meta.Version,
-		UnlockRotation: api.UnlockKeyRotation{
-			RotateManagerKey: true,
+		Rotation: api.KeyRotation{
+			ManagerUnlockKey: true,
 		},
 	})
 	require.NoError(t, err)
@@ -342,12 +342,12 @@ func TestUpdateClusterRotateUnlockKey(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, r.Clusters, 1)
 	require.False(t, r.Clusters[0].Spec.EncryptionConfig.AutoLockManagers)
-	require.Equal(t, api.UnlockKeys{}, r.Clusters[0].UnlockKeys) // redacted
+	require.Nil(t, r.Clusters[0].UnlockKeys) // redacted
 
 	// we have to get the key from the memory store, since the cluster returned by the API is redacted
 	ts.Store.View(func(tx store.ReadTx) {
 		cluster := store.GetCluster(tx, r.Clusters[0].ID)
-		require.Nil(t, cluster.UnlockKeys.Manager)
+		require.Nil(t, cluster.UnlockKeys)
 	})
 
 	// Enable auto-lock only, no rotation boolean
@@ -368,13 +368,16 @@ func TestUpdateClusterRotateUnlockKey(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, r.Clusters, 1)
 	require.True(t, r.Clusters[0].Spec.EncryptionConfig.AutoLockManagers)
-	require.Equal(t, api.UnlockKeys{}, r.Clusters[0].UnlockKeys) // redacted
+	require.Nil(t, r.Clusters[0].UnlockKeys) // redacted
 
 	var managerKey []byte
 	ts.Store.View(func(tx store.ReadTx) {
 		cluster := store.GetCluster(tx, r.Clusters[0].ID)
-		require.NotNil(t, cluster.UnlockKeys.Manager)
-		managerKey = cluster.UnlockKeys.Manager
+		require.Len(t, cluster.UnlockKeys, 1)
+		require.NotNil(t, cluster.UnlockKeys[0])
+		require.Equal(t, cluster.UnlockKeys[0].Subsystem, ca.ManagerRole)
+		managerKey = cluster.UnlockKeys[0].Key
+		require.NotNil(t, managerKey)
 	})
 
 	// Rotate the manager key
@@ -382,8 +385,8 @@ func TestUpdateClusterRotateUnlockKey(t *testing.T) {
 		ClusterID:      cluster.ID,
 		Spec:           spec,
 		ClusterVersion: &r.Clusters[0].Meta.Version,
-		UnlockRotation: api.UnlockKeyRotation{
-			RotateManagerKey: true,
+		Rotation: api.KeyRotation{
+			ManagerUnlockKey: true,
 		},
 	})
 	require.NoError(t, err)
@@ -396,12 +399,15 @@ func TestUpdateClusterRotateUnlockKey(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, r.Clusters, 1)
 	require.True(t, r.Clusters[0].Spec.EncryptionConfig.AutoLockManagers)
-	require.Equal(t, api.UnlockKeys{}, r.Clusters[0].UnlockKeys) // redacted
+	require.Nil(t, r.Clusters[0].UnlockKeys) // redacted
 
 	ts.Store.View(func(tx store.ReadTx) {
 		cluster := store.GetCluster(tx, r.Clusters[0].ID)
-		require.NotNil(t, cluster.UnlockKeys.Manager)
-		require.NotEqual(t, managerKey, cluster.UnlockKeys.Manager) // key has changed
+		require.Len(t, cluster.UnlockKeys, 1)
+		require.NotNil(t, cluster.UnlockKeys[0])
+		require.Equal(t, cluster.UnlockKeys[0].Subsystem, ca.ManagerRole)
+		require.NotNil(t, cluster.UnlockKeys[0].Key)
+		require.NotEqual(t, managerKey, cluster.UnlockKeys[0].Key) // key has changed
 	})
 
 	// Disable auto lock
@@ -409,8 +415,8 @@ func TestUpdateClusterRotateUnlockKey(t *testing.T) {
 		ClusterID:      cluster.ID,
 		Spec:           &cluster.Spec, // set back to original spec
 		ClusterVersion: &r.Clusters[0].Meta.Version,
-		UnlockRotation: api.UnlockKeyRotation{
-			RotateManagerKey: true, // this will be ignored because we disable the auto-lock
+		Rotation: api.KeyRotation{
+			ManagerUnlockKey: true, // this will be ignored because we disable the auto-lock
 		},
 	})
 	require.NoError(t, err)
@@ -423,11 +429,11 @@ func TestUpdateClusterRotateUnlockKey(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, r.Clusters, 1)
 	require.False(t, r.Clusters[0].Spec.EncryptionConfig.AutoLockManagers)
-	require.Equal(t, api.UnlockKeys{}, r.Clusters[0].UnlockKeys) // redacted
+	require.Nil(t, r.Clusters[0].UnlockKeys) // redacted
 
 	ts.Store.View(func(tx store.ReadTx) {
 		cluster := store.GetCluster(tx, r.Clusters[0].ID)
-		require.Nil(t, cluster.UnlockKeys.Manager)
+		require.Nil(t, cluster.UnlockKeys)
 	})
 }
 
