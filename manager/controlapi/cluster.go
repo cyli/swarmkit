@@ -6,6 +6,7 @@ import (
 
 	"github.com/docker/swarmkit/api"
 	"github.com/docker/swarmkit/ca"
+	"github.com/docker/swarmkit/log"
 	"github.com/docker/swarmkit/manager/encryption"
 	"github.com/docker/swarmkit/manager/state/store"
 	"github.com/docker/swarmkit/protobuf/ptypes"
@@ -120,6 +121,7 @@ func (s *Server) UpdateCluster(ctx context.Context, request *api.UpdateClusterRe
 		// keys in this field, we need to search for the appropriate subsystem.
 		if cluster.Spec.EncryptionConfig.AutoLockManagers {
 			if len(cluster.UnlockKeys) == 0 || request.Rotation.ManagerUnlockKey {
+				log.G(ctx).Debugf("rotating manager unlock key")
 				cluster.UnlockKeys = []*api.EncryptionKey{{
 					Subsystem: ca.ManagerRole,
 					Key:       encryption.GenerateSecretKey(),

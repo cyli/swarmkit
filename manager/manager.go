@@ -382,8 +382,6 @@ func (m *Manager) Run(parent context.Context) error {
 
 	close(m.started)
 
-	go m.watchForKEKChanges(ctx)
-
 	go func() {
 		if m.keyRotator.GetNewKey() != nil {
 			m.keyRotator.rotationChan <- struct{}{}
@@ -413,6 +411,10 @@ func (m *Manager) Run(parent context.Context) error {
 		return err
 	}
 	raftConfig := c.Spec.Raft
+
+	if err := m.watchForKEKChanges(ctx); err != nil {
+		return err
+	}
 
 	if int(raftConfig.ElectionTick) != m.raftNode.Config.ElectionTick {
 		log.G(ctx).Warningf("election tick value (%ds) is different from the one defined in the cluster config (%vs), the cluster may be unstable", m.raftNode.Config.ElectionTick, raftConfig.ElectionTick)
@@ -553,10 +555,7 @@ func (m *Manager) joinAndStart(ctx context.Context) error {
 	})
 }
 
-func (m *Manager) watchForKEKChanges(ctx context.Context) {
-	clusterWatch, clusterWatchCancel := state.Watch(m.raftNode.MemoryStore().WatchQueue(),
-		state.EventUpdateCluster{},
-	)
+func (m *Manager) updateKEK(ctx context.Context, cluster *api.Cluster, r remotes.Remotes) error {
 	securityConfig := m.config.SecurityConfig
 	nodeID := m.config.SecurityConfig.ClientTLSCreds.NodeID()
 	logger := log.G(ctx).WithFields(logrus.Fields{
@@ -564,51 +563,81 @@ func (m *Manager) watchForKEKChanges(ctx context.Context) {
 		"node.role": ca.ManagerRole,
 	})
 
-	// we are our own peer from which we get certs - try to connect over the local socket
-	r := remotes.NewRemotes(api.Peer{Addr: m.Addr(), NodeID: nodeID})
-	defer clusterWatchCancel()
-	for {
-		select {
-		case event := <-clusterWatch:
-			clusterEvent := event.(state.EventUpdateCluster)
-			var kek []byte
-			for _, encryptionKey := range clusterEvent.Cluster.UnlockKeys {
-				if encryptionKey.Subsystem == ca.ManagerRole {
-					kek = encryptionKey.Key
-					break
-				}
-			}
-			switch {
-			case subtle.ConstantTimeCompare(kek, m.keyRotator.GetCurrentKEK()) == 1:
-				// if the KEK hasn't changed, do nothing
-				continue
-			case m.keyRotator.GetCurrentKEK() == nil:
-				// it was previously unencrypted, and now needs to be encrypted - trigger
-				// a full rotation of the TLS keys too
-				if err := ca.RenewTLSConfigNow(ctx, securityConfig, r); err != nil {
-					continue
-				}
-				// Now that we have a new TLS certificate, let's load it from disk and
-				// update our key rotator
-				headers, _, err := securityConfig.KeyReader().ReadHeaders()
-				if err != nil {
-					logger.WithError(err).Errorf("failed to read refreshed TLS key from disk")
-					continue
-				}
-				m.keyRotator.LoadFromHeaders(headers, kek)
-				// trigger a raft DEK rotation
-				m.keyRotator.RotationNotify() <- struct{}{}
-			default:
-				// the kek has just changed - all we just to do is re-encrypt the DEK and the cert
-				if err := securityConfig.KeyWriter().RotateKEK(kek); err != nil {
-					logger.WithError(err).Errorf("failed to re-encrypt TLS key")
-					continue
-				}
-			}
-		case <-ctx.Done():
-			return
+	var kek []byte
+	for _, encryptionKey := range cluster.UnlockKeys {
+		if encryptionKey.Subsystem == ca.ManagerRole {
+			kek = encryptionKey.Key
+			break
 		}
 	}
+	switch {
+	case subtle.ConstantTimeCompare(kek, m.keyRotator.GetCurrentKEK()) == 1:
+		// if the KEK hasn't changed, do nothing
+		return nil
+	case m.keyRotator.GetCurrentKEK() == nil:
+		// it was previously unencrypted, and now needs to be encrypted - trigger
+		// a full rotation of the TLS keys too
+		if err := ca.RenewTLSConfigNow(ctx, securityConfig, r); err != nil {
+			return err
+		}
+		// Now that we have a new TLS certificate, let's load it from disk and
+		// update our key rotator
+		headers, _, err := securityConfig.KeyReader().ReadHeaders()
+		if err != nil {
+			logger.WithError(err).Errorf("failed to read refreshed TLS key from disk")
+			return err
+		}
+		m.keyRotator.LoadFromHeaders(headers, kek)
+		// trigger a raft DEK rotation
+		m.keyRotator.RotationNotify() <- struct{}{}
+	default:
+		// the kek has just changed - all we just to do is re-encrypt the DEK and the cert
+		if err := securityConfig.KeyWriter().RotateKEK(kek); err != nil {
+			logger.WithError(err).Errorf("failed to re-encrypt TLS key")
+			return err
+		}
+		m.keyRotator.currentKEK = kek
+		logger.Debugf("KEK rotated successfully")
+	}
+	return nil
+}
+
+func (m *Manager) watchForKEKChanges(ctx context.Context) error {
+	// we are our own peer from which we get certs - try to connect over the local socket
+	nodeID := m.config.SecurityConfig.ClientTLSCreds.NodeID()
+	r := remotes.NewRemotes(api.Peer{Addr: m.Addr(), NodeID: nodeID})
+
+	clusterID := m.config.SecurityConfig.ClientTLSCreds.Organization()
+	clusterWatch, clusterWatchCancel, err := store.ViewAndWatch(m.raftNode.MemoryStore(),
+		func(tx store.ReadTx) error {
+			cluster := store.GetCluster(tx, clusterID)
+			if cluster == nil {
+				return fmt.Errorf("unable to get current cluster")
+			}
+			return m.updateKEK(ctx, cluster, r)
+		},
+		state.EventUpdateCluster{
+			Cluster: &api.Cluster{ID: clusterID},
+			Checks:  []state.ClusterCheckFunc{state.ClusterCheckID},
+		},
+	)
+	if err != nil {
+		return err
+	}
+
+	go func() {
+		defer clusterWatchCancel()
+		for {
+			select {
+			case event := <-clusterWatch:
+				clusterEvent := event.(state.EventUpdateCluster)
+				m.updateKEK(ctx, clusterEvent.Cluster, r)
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return nil
 }
 
 // rotateRootCAKEK will attempt to rotate the key-encryption-key for root CA key-material in raft.

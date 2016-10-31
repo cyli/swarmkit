@@ -17,10 +17,15 @@ import (
 
 // get the unlock key
 
-func getCAClient(cmd *cobra.Command) (api.CAClient, error) {
+func displayUnlockKey(cluster *api.Cluster, cmd *cobra.Command) error {
+	if !cluster.Spec.EncryptionConfig.AutoLockManagers {
+		fmt.Println("Managers not auto-locked.")
+		return nil
+	}
+
 	addr, err := cmd.Flags().GetString("socket")
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	opts := []grpc.DialOption{}
@@ -32,10 +37,17 @@ func getCAClient(cmd *cobra.Command) (api.CAClient, error) {
 		}))
 	conn, err := grpc.Dial(addr, opts...)
 	if err != nil {
-		return nil, err
+		return err
+	}
+	defer conn.Close()
+
+	resp, err := api.NewCAClient(conn).GetUnlockKey(common.Context(cmd), &api.GetUnlockKeyRequest{})
+	if err != nil {
+		return err
 	}
 
-	return api.NewCAClient(conn), nil
+	fmt.Printf("Managers auto-locked.  Unlock key: %s\n", encryption.HumanReadableKey(resp.UnlockKey))
+	return nil
 }
 
 var (
@@ -61,23 +73,7 @@ var (
 				return err
 			}
 
-			c2, err := getCAClient(cmd)
-			if err != nil {
-				return err
-			}
-
-			resp, err := c2.GetUnlockKey(common.Context(cmd), &api.GetUnlockKeyRequest{})
-			if err != nil {
-				return err
-			}
-
-			if cluster.Spec.EncryptionConfig.AutoLockManagers {
-				fmt.Printf("Managers auto-locked.  Unlock key: %s\n", encryption.HumanReadableKey(resp.UnlockKey))
-			} else {
-				fmt.Println("Managers not auto-locked.")
-			}
-
-			return nil
+			return displayUnlockKey(cluster, cmd)
 		},
 	}
 )

@@ -91,8 +91,9 @@ var (
 			}
 			rotateUnlockKey, err := flags.GetBool("rotate-unlock-key")
 			if err != nil {
-				rotation.ManagerUnlockKey = rotateUnlockKey
+				return err
 			}
+			rotation.ManagerUnlockKey = rotateUnlockKey
 
 			driver, err := common.ParseLogDriverFlags(flags)
 			if err != nil {
@@ -110,6 +111,10 @@ var (
 				return err
 			}
 			fmt.Println(r.Cluster.ID)
+
+			if rotation.ManagerUnlockKey {
+				return displayUnlockKey(cluster, cmd)
+			}
 			return nil
 		},
 	}
