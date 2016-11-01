@@ -100,17 +100,11 @@ func (s *SecurityConfig) RootCA() *RootCA {
 
 // KeyWriter returns the object that can write keys to disk
 func (s *SecurityConfig) KeyWriter() KeyWriter {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	return s.keyReadWriter
 }
 
 // KeyReader returns the object that can read keys from disk
 func (s *SecurityConfig) KeyReader() KeyReader {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	return s.keyReadWriter
 }
 
@@ -202,13 +196,19 @@ func getCAHashFromToken(token string) (digest.Digest, error) {
 // DownloadRootCA tries to retrieve a remote root CA and matches the digest against the provided token.
 func DownloadRootCA(ctx context.Context, paths CertPaths, token string, r remotes.Remotes) (RootCA, error) {
 	var rootCA RootCA
-	// Get a digest for the CA hash string that we've been provided.  Hash
-	// must be valid.
-	d, err := getCAHashFromToken(token)
-	if err != nil {
-		return RootCA{}, err
+	// Get a digest for the optional CA hash string that we've been provided
+	// If we were provided a non-empty string, and it is an invalid hash, return
+	// otherwise, allow the invalid digest through.
+	var (
+		d   digest.Digest
+		err error
+	)
+	if token != "" {
+		d, err = getCAHashFromToken(token)
+		if err != nil {
+			return RootCA{}, err
+		}
 	}
-
 	// Get the remote CA certificate, verify integrity with the
 	// hash provided. Retry up to 5 times, in case the manager we
 	// first try to contact is not responding properly (it may have

@@ -61,7 +61,10 @@ func TestManager(t *testing.T) {
 		StateDir:         stateDir,
 		SecurityConfig:   managerSecurityConfig,
 		AutoLockManagers: true,
-		UnlockKey:        []byte("kek"),
+		PEMHeadersManager: NewRaftDEKPEMHeadersManager(
+			RaftDEKData{CurrentDEK: []byte("dek")},
+			[]byte("kek"),
+		),
 	})
 	assert.NoError(t, err)
 	assert.NotNil(t, m)
@@ -193,105 +196,44 @@ func TestManager(t *testing.T) {
 	<-done
 }
 
-func TestMaintainEncryptedPEMHeaders(t *testing.T) {
-	sampleHeaderValueEncrypted, err := encodePEMHeaderValue([]byte("DEK"), []byte("original KEK"))
-	require.NoError(t, err)
-	sampleHeaderValueUnencrypted, err := encodePEMHeaderValue([]byte("DEK"), nil)
-	require.NoError(t, err)
-
-	// if there are no headers, nothing is done
-	headers := map[string]string{}
-	require.NoError(t, MaintainEncryptedPEMHeaders(headers, nil, []byte("new KEK")))
-	require.Empty(t, headers)
-
-	// if there is a pending header, it gets re-encrypted even if there is no DEK
-	headers = map[string]string{defaultRaftDEKKeyPending: sampleHeaderValueUnencrypted}
-	require.NoError(t, MaintainEncryptedPEMHeaders(headers, nil, []byte("new KEK")))
-	require.Len(t, headers, 1)
-	decoded, err := decodePEMHeaderValue(headers[defaultRaftDEKKeyPending], []byte("new KEK"))
-	require.NoError(t, err)
-	require.Equal(t, []byte("DEK"), decoded)
-
-	// if there is a regular header, it gets re-encrypted and no new headers are added if the original kek was not nil
-	headers = map[string]string{defaultRaftDEKKey: sampleHeaderValueEncrypted}
-	require.NoError(t, MaintainEncryptedPEMHeaders(headers, []byte("original KEK"), []byte("new KEK")))
-	require.Len(t, headers, 1)
-	decoded, err = decodePEMHeaderValue(headers[defaultRaftDEKKey], []byte("new KEK"))
-	require.NoError(t, err)
-	require.Equal(t, []byte("DEK"), decoded)
-
-	// if there is a regular header and no pending header, the regular header gets re-encrypted and a pending header is added
-	headers = map[string]string{defaultRaftDEKKey: sampleHeaderValueUnencrypted}
-	require.NoError(t, MaintainEncryptedPEMHeaders(headers, nil, []byte("new KEK")))
-	require.Len(t, headers, 2)
-	decoded, err = decodePEMHeaderValue(headers[defaultRaftDEKKey], []byte("new KEK"))
-	require.NoError(t, err)
-	require.Equal(t, []byte("DEK"), decoded)
-	decoded, err = decodePEMHeaderValue(headers[defaultRaftDEKKeyPending], []byte("new KEK"))
-	require.NoError(t, err)
-	require.NotEqual(t, []byte("DEK"), decoded) // randomly generated
-
-	// both headers get re-encrypted, if both are present, and no new key is created
-	headers = map[string]string{
-		defaultRaftDEKKey:        sampleHeaderValueUnencrypted,
-		defaultRaftDEKKeyPending: sampleHeaderValueUnencrypted,
-	}
-	require.NoError(t, MaintainEncryptedPEMHeaders(headers, nil, []byte("new KEK")))
-	require.Len(t, headers, 2)
-	decoded, err = decodePEMHeaderValue(headers[defaultRaftDEKKeyPending], []byte("new KEK"))
-	require.NoError(t, err)
-	require.Equal(t, []byte("DEK"), decoded)
-	decoded, err = decodePEMHeaderValue(headers[defaultRaftDEKKey], []byte("new KEK"))
-	require.NoError(t, err)
-	require.Equal(t, []byte("DEK"), decoded)
-
-	// if we can't decrypt either one, fail
-	headers = map[string]string{
-		defaultRaftDEKKey:        sampleHeaderValueUnencrypted,
-		defaultRaftDEKKeyPending: sampleHeaderValueEncrypted,
-	}
-	require.Error(t, MaintainEncryptedPEMHeaders(headers, nil, []byte("original KEK")))
-
-	// if we're going from encrypted to unencrypted, the DEK does not need to be rotated
-	headers = map[string]string{defaultRaftDEKKey: sampleHeaderValueEncrypted}
-	require.NoError(t, MaintainEncryptedPEMHeaders(headers, []byte("original KEK"), nil))
-	require.Len(t, headers, 1)
-	decoded, err = decodePEMHeaderValue(headers[defaultRaftDEKKey], nil)
-	require.NoError(t, err)
-	require.Equal(t, []byte("DEK"), decoded)
-}
-
 // Tests locking and unlocking the manager and key rotations
 func TestManagerLockUnlock(t *testing.T) {
 	ctx := context.Background()
 
 	temp, err := ioutil.TempFile("", "test-manager-lock")
-	assert.NoError(t, err)
-	assert.NoError(t, temp.Close())
-	assert.NoError(t, os.Remove(temp.Name()))
+	require.NoError(t, err)
+	require.NoError(t, temp.Close())
+	require.NoError(t, os.Remove(temp.Name()))
 
 	defer os.RemoveAll(temp.Name())
 
 	stateDir, err := ioutil.TempDir("", "test-raft")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	defer os.RemoveAll(stateDir)
 
+	// start without a DEK, so we can test automatically adding one
+	pemHeaderManager := &RaftDEKPEMHeadersManager{}
+
 	tc := testutils.NewTestCA(t, func(p ca.CertPaths) *ca.KeyReadWriter {
-		return ca.NewKeyReadWriter(p, nil, MaintainEncryptedPEMHeaders)
+		return ca.NewKeyReadWriter(p, nil, pemHeaderManager)
 	})
 	defer tc.Stop()
 
 	managerSecurityConfig, err := tc.NewNodeConfig(ca.ManagerRole)
-	assert.NoError(t, err)
+	require.NoError(t, err)
+
+	_, _, err = managerSecurityConfig.KeyReader().Read()
+	require.NoError(t, err)
 
 	m, err := New(&Config{
-		RemoteAPI:      RemoteAddrs{ListenAddr: "127.0.0.1:0"},
-		ControlAPI:     temp.Name(),
-		StateDir:       stateDir,
-		SecurityConfig: managerSecurityConfig,
+		RemoteAPI:         RemoteAddrs{ListenAddr: "127.0.0.1:0"},
+		ControlAPI:        temp.Name(),
+		StateDir:          stateDir,
+		SecurityConfig:    managerSecurityConfig,
+		PEMHeadersManager: pemHeaderManager,
 	})
-	assert.NoError(t, err)
-	assert.NotNil(t, m)
+	require.NoError(t, err)
+	require.NotNil(t, m)
 
 	done := make(chan error)
 	defer close(done)
@@ -305,9 +247,9 @@ func TestManagerLockUnlock(t *testing.T) {
 	}
 
 	conn, err := grpc.Dial(m.Addr(), opts...)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	defer func() {
-		assert.NoError(t, conn.Close())
+		require.NoError(t, conn.Close())
 	}()
 
 	// check that there is no kek currently - we are using the API because this
@@ -336,71 +278,87 @@ func TestManagerLockUnlock(t *testing.T) {
 	require.NotNil(t, keyBlock)
 	require.False(t, x509.IsEncryptedPEMBlock(keyBlock))
 	require.Len(t, keyBlock.Headers, 1)
-	currentDEK, err := decodePEMHeaderValue(keyBlock.Headers[defaultRaftDEKKey], nil)
+	currentDEK, err := decodePEMHeaderValue(keyBlock.Headers[pemHeaderRaftDEK], nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, currentDEK)
 
 	tlsKeyPrivateBytes := keyBlock.Bytes
 
-	// update the lock key
-	require.NoError(t, m.raftNode.MemoryStore().Update(func(tx store.Tx) error {
-		latestCluster := store.GetCluster(tx, cluster.ID)
-		latestCluster.Spec.EncryptionConfig.AutoLockManagers = true
-		latestCluster.UnlockKeys = []*api.EncryptionKey{{
-			Key:       []byte("kek"),
-			Subsystem: ca.ManagerRole,
-		}}
-		return store.UpdateCluster(tx, latestCluster)
-	}))
+	// update the lock key - this may fail due to update out of sequence errors, so try again
+	for i := 0; i < 3; i++ {
+		getResp, err := client.GetCluster(ctx, &api.GetClusterRequest{ClusterID: cluster.ID})
+		require.NoError(t, err)
+		cluster = getResp.Cluster
+
+		spec := cluster.Spec.Copy()
+		spec.EncryptionConfig.AutoLockManagers = true
+		_, err = client.UpdateCluster(ctx, &api.UpdateClusterRequest{
+			ClusterID:      cluster.ID,
+			ClusterVersion: &cluster.Meta.Version,
+			Spec:           spec,
+		})
+		if grpc.ErrorDesc(err) == "update out of sequence" {
+			continue
+		}
+		if err == nil {
+			break
+		}
+	}
+	require.NoError(t, err)
 
 	// this should update the TLS key and start rotating the DEK
 	var updatedKey []byte
 	require.NoError(t, raftutils.PollFuncWithTimeout(nil, func() error {
 		updatedKey, err = ioutil.ReadFile(tc.Paths.Node.Key)
-		if err != nil {
-			return err
-		}
+		require.NoError(t, err) // this should never error due to atomic writes
 
 		if bytes.Equal(key, updatedKey) {
-			return fmt.Errorf("TLS key should have been rotated")
+			return fmt.Errorf("TLS key should have been re-encrypted at least")
+		}
+
+		keyBlock, _ = pem.Decode(updatedKey)
+		require.NotNil(t, keyBlock) // this should never error due to atomic writes
+
+		if !x509.IsEncryptedPEMBlock(keyBlock) {
+			return fmt.Errorf("Key not encrypted")
 		}
 
 		return nil
 	}, 1*time.Second))
 
-	// the new key should be encrypted, and a DEK rotation should have kicked off
-	keyBlock, _ = pem.Decode(updatedKey)
-	require.NotNil(t, keyBlock)
-	require.True(t, x509.IsEncryptedPEMBlock(keyBlock))
-	// check that it wasn't just the previous key, encrypted
-	derBytes, err := x509.DecryptPEMBlock(keyBlock, []byte("kek"))
+	caConn := api.NewCAClient(conn)
+	unlockKeyResp, err := caConn.GetUnlockKey(ctx, &api.GetUnlockKeyRequest{})
 	require.NoError(t, err)
-	require.NotEqual(t, tlsKeyPrivateBytes, derBytes)
-	tlsKeyPrivateBytes = derBytes
 
 	// Don't know how fast the process was - if the DEK finished rotating and
 	// the snapshot is done, then there'd only be one DEK header.  Either way,
 	// there will be 2 key encryption headers.
 	if len(keyBlock.Headers) > 3 {
 		require.Len(t, keyBlock.Headers, 4)
-		stillCurrentDEK, err := decodePEMHeaderValue(keyBlock.Headers[defaultRaftDEKKey], []byte("kek"))
+		stillCurrentDEK, err := decodePEMHeaderValue(keyBlock.Headers[pemHeaderRaftDEK], unlockKeyResp.UnlockKey)
 		require.NoError(t, err)
 		require.Equal(t, currentDEK, stillCurrentDEK)
-		pendingDEK, err := decodePEMHeaderValue(keyBlock.Headers[defaultRaftDEKKeyPending], []byte("kek"))
+		pendingDEK, err := decodePEMHeaderValue(keyBlock.Headers[pemHeaderRaftPendingDEK], unlockKeyResp.UnlockKey)
 		require.NoError(t, err)
 		require.NotEqual(t, currentDEK, pendingDEK)
 	}
 
 	require.NoError(t, raftutils.PollFuncWithTimeout(nil, func() error {
 		updatedKey, err = ioutil.ReadFile(tc.Paths.Node.Key)
-		if err != nil {
-			return err
-		}
+		require.NoError(t, err) // this should never error due to atomic writes
 
 		keyBlock, _ = pem.Decode(updatedKey)
-		if keyBlock == nil {
-			return fmt.Errorf("Invalid TLS Key")
+		require.NotNil(t, keyBlock) // this should never error due to atomic writes
+
+		// the new key should be encrypted, and a DEK rotation should have kicked off
+		// check that it wasn't just the previous key, encrypted
+		derBytes, err := x509.DecryptPEMBlock(keyBlock, unlockKeyResp.UnlockKey)
+		require.NoError(t, err) // this should never, because what else would it be re-encrypted with?
+
+		if bytes.Equal(tlsKeyPrivateBytes, derBytes) {
+			return fmt.Errorf("TLS key has not been renewed")
 		}
+		tlsKeyPrivateBytes = derBytes
 
 		if len(keyBlock.Headers) != 3 {
 			return fmt.Errorf("DEK not finished rotating")
@@ -409,7 +367,7 @@ func TestManagerLockUnlock(t *testing.T) {
 		return nil
 	}, 1*time.Second))
 
-	nowCurrentDEK, err := decodePEMHeaderValue(keyBlock.Headers[defaultRaftDEKKey], []byte("kek"))
+	nowCurrentDEK, err := decodePEMHeaderValue(keyBlock.Headers[pemHeaderRaftDEK], unlockKeyResp.UnlockKey)
 	require.NoError(t, err)
 	require.NotNil(t, nowCurrentDEK)
 	require.NotEqual(t, nowCurrentDEK, currentDEK)
@@ -423,11 +381,23 @@ func TestManagerLockUnlock(t *testing.T) {
 	require.NotNil(t, snapshot)
 
 	// update the lock key to nil
-	require.NoError(t, m.raftNode.MemoryStore().Update(func(tx store.Tx) error {
-		latestCluster := store.GetCluster(tx, cluster.ID)
-		latestCluster.UnlockKeys = nil
-		return store.UpdateCluster(tx, latestCluster)
-	}))
+	for i := 0; i < 3; i++ {
+		getResp, err := client.GetCluster(ctx, &api.GetClusterRequest{ClusterID: cluster.ID})
+		require.NoError(t, err)
+		cluster = getResp.Cluster
+
+		spec := cluster.Spec.Copy()
+		spec.EncryptionConfig.AutoLockManagers = false
+		_, err = client.UpdateCluster(ctx, &api.UpdateClusterRequest{
+			ClusterID:      cluster.ID,
+			ClusterVersion: &cluster.Meta.Version,
+			Spec:           spec,
+		})
+		if grpc.ErrorDesc(err) == "update out of sequence" {
+			continue
+		}
+		require.NoError(t, err)
+	}
 
 	// this should update the TLS key
 	var unlockedKey []byte
@@ -452,7 +422,7 @@ func TestManagerLockUnlock(t *testing.T) {
 	// check that this is just the previous TLS key, decrypted
 	require.Equal(t, tlsKeyPrivateBytes, keyBlock.Bytes)
 
-	unencryptedDEK, err := decodePEMHeaderValue(keyBlock.Headers[defaultRaftDEKKey], nil)
+	unencryptedDEK, err := decodePEMHeaderValue(keyBlock.Headers[pemHeaderRaftDEK], nil)
 	require.NoError(t, err)
 	require.NotNil(t, unencryptedDEK)
 	require.Equal(t, nowCurrentDEK, unencryptedDEK)

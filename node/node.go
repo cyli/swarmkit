@@ -121,6 +121,7 @@ type Node struct {
 	manager              *manager.Manager
 	notifyNodeChange     chan *api.Node // used to send role updates from the dispatcher api on promotion/demotion
 	unlockKey            []byte
+	pemHeaderManager     *manager.RaftDEKPEMHeadersManager
 }
 
 // RemoteAPIAddr returns address on which remote manager api listens.
@@ -545,7 +546,8 @@ func (n *Node) loadSecurityConfig(ctx context.Context) (*ca.SecurityConfig, erro
 		}
 	}()
 
-	krw := ca.NewKeyReadWriter(paths.Node, n.unlockKey, manager.MaintainEncryptedPEMHeaders)
+	pemHeaderManager := &manager.RaftDEKPEMHeadersManager{}
+	krw := ca.NewKeyReadWriter(paths.Node, n.unlockKey, pemHeaderManager)
 	// LoadOrCreateSecurityConfig is the point at which a new node joining a cluster will retrieve TLS
 	// certificates and write them to disk
 	securityConfig, err := ca.LoadOrCreateSecurityConfig(
@@ -559,6 +561,7 @@ func (n *Node) loadSecurityConfig(ctx context.Context) (*ca.SecurityConfig, erro
 	n.nodeID = securityConfig.ClientTLSCreds.NodeID()
 	n.nodeMembership = api.NodeMembershipAccepted
 	n.roleCond.Broadcast()
+	n.pemHeaderManager = pemHeaderManager
 	n.Unlock()
 
 	return securityConfig, nil
@@ -639,15 +642,15 @@ func (n *Node) runManager(ctx context.Context, securityConfig *ca.SecurityConfig
 				ListenAddr:    n.config.ListenRemoteAPI,
 				AdvertiseAddr: n.config.AdvertiseRemoteAPI,
 			},
-			ControlAPI:       n.config.ListenControlAPI,
-			SecurityConfig:   securityConfig,
-			ExternalCAs:      n.config.ExternalCAs,
-			JoinRaft:         remoteAddr.Addr,
-			StateDir:         n.config.StateDir,
-			HeartbeatTick:    n.config.HeartbeatTick,
-			ElectionTick:     n.config.ElectionTick,
-			AutoLockManagers: n.config.AutoLockManagers,
-			UnlockKey:        n.unlockKey,
+			ControlAPI:        n.config.ListenControlAPI,
+			SecurityConfig:    securityConfig,
+			ExternalCAs:       n.config.ExternalCAs,
+			JoinRaft:          remoteAddr.Addr,
+			StateDir:          n.config.StateDir,
+			HeartbeatTick:     n.config.HeartbeatTick,
+			ElectionTick:      n.config.ElectionTick,
+			AutoLockManagers:  n.config.AutoLockManagers,
+			PEMHeadersManager: n.pemHeaderManager,
 		})
 		if err != nil {
 			return err

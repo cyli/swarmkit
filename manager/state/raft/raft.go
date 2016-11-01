@@ -24,6 +24,7 @@ import (
 	"github.com/docker/swarmkit/api"
 	"github.com/docker/swarmkit/ca"
 	"github.com/docker/swarmkit/log"
+	"github.com/docker/swarmkit/manager/encryption"
 	"github.com/docker/swarmkit/manager/raftselector"
 	"github.com/docker/swarmkit/manager/state/raft/membership"
 	"github.com/docker/swarmkit/manager/state/raft/storage"
@@ -76,8 +77,9 @@ const (
 
 // EncryptionKeyRotator is an interface to find out if any keys need rotating.
 type EncryptionKeyRotator interface {
-	GetNewKey() []byte
-	FinishKeyRotation([]byte) error
+	GetCurrentKey() []byte
+	GetPendingKey() []byte
+	MaybeDoRotation(func([]byte) error) (bool, error)
 	RotationNotify() chan struct{}
 }
 
@@ -127,10 +129,10 @@ type Node struct {
 	// to stop.
 	stopped chan struct{}
 
-	lastSendToMember map[uint64]chan struct{}
-	raftLogger       *storage.EncryptedRaftLogger
-
-	keyRotator EncryptionKeyRotator
+	lastSendToMember  map[uint64]chan struct{}
+	raftLogger        *storage.EncryptedRaftLogger
+	keyRotator        EncryptionKeyRotator
+	triggerRotationCh chan struct{}
 }
 
 // NodeOptions provides node-level options.
@@ -159,10 +161,6 @@ type NodeOptions struct {
 	// nodes. Leave this as 0 to get the default value.
 	SendTimeout    time.Duration
 	TLSCredentials credentials.TransportCredentials
-
-	// KeyRotator provides an EncryptionKeyRotator interface, so that the key for
-	// raft at rest encryption can be rotated
-	KeyRotator EncryptionKeyRotator
 }
 
 func init() {
@@ -201,6 +199,7 @@ func NewNode(opts NodeOptions) *Node {
 		stopped:             make(chan struct{}),
 		leadershipBroadcast: watch.NewQueue(),
 		lastSendToMember:    make(map[uint64]chan struct{}),
+		triggerRotationCh:   make(chan struct{}),
 	}
 	n.memoryStore = store.NewMemoryStore(n)
 
@@ -241,7 +240,22 @@ func (n *Node) WithContext(ctx context.Context) (context.Context, context.Cancel
 }
 
 // JoinAndStart joins and starts the raft server
-func (n *Node) JoinAndStart(ctx context.Context, raftEncryptionKey []byte) (err error) {
+func (n *Node) JoinAndStart(ctx context.Context, keyRotator EncryptionKeyRotator) error {
+	n.keyRotator = keyRotator
+	if keyRotator.GetPendingKey() != nil {
+		_, err := keyRotator.MaybeDoRotation(func(key []byte) error {
+			return n.joinAndStart(ctx, key)
+		})
+		// if the dek hasn't been used to snapshot, we can fall back to the original dek
+		// (although a rotation still needs to happen)
+		if _, ok := errors.Cause(err).(encryption.ErrCannotDecrypt); !ok {
+			return err
+		}
+	}
+	return n.joinAndStart(ctx, keyRotator.GetCurrentKey())
+}
+
+func (n *Node) joinAndStart(ctx context.Context, dek []byte) (err error) {
 	ctx, cancel := n.WithContext(ctx)
 	defer func() {
 		cancel()
@@ -252,7 +266,7 @@ func (n *Node) JoinAndStart(ctx context.Context, raftEncryptionKey []byte) (err 
 
 	n.raftLogger = &storage.EncryptedRaftLogger{
 		StateDir:      n.opts.StateDir,
-		EncryptionKey: raftEncryptionKey,
+		EncryptionKey: dek,
 	}
 
 	loadAndStartErr := n.loadAndStart(ctx, n.opts.ForceNewCluster)
@@ -392,11 +406,6 @@ func (n *Node) Run(ctx context.Context) error {
 
 	wasLeader := false
 
-	var rotationNotification chan struct{}
-	if n.opts.KeyRotator != nil {
-		rotationNotification = n.opts.KeyRotator.RotationNotify()
-	}
-
 	for {
 		select {
 		case <-n.ticker.C():
@@ -511,13 +520,13 @@ func (n *Node) Run(ctx context.Context) error {
 				n.snapshotIndex = snapshotIndex
 			}
 			n.snapshotInProgress = nil
-			if n.opts.KeyRotator != nil && n.opts.KeyRotator.GetNewKey() != nil {
+			if n.keyRotator.GetPendingKey() != nil {
 				// there was a key rotation that took place before while the snapshot
 				// was in progress - we have to take another snapshot and encrypt with the new key
 				n.doSnapshot(ctx, n.getCurrentRaftConfig())
 			}
-		case <-rotationNotification:
-			if n.snapshotInProgress == nil {
+		case <-n.keyRotator.RotationNotify():
+			if n.snapshotInProgress == nil && n.keyRotator.GetPendingKey() != nil {
 				n.doSnapshot(ctx, n.getCurrentRaftConfig())
 			}
 		case <-n.removeRaftCh:
