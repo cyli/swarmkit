@@ -7,6 +7,7 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -19,13 +20,15 @@ const (
 	keyPerms = 0600
 	// certPerms are the permissions used to write TLS certificates
 	certPerms = 0644
+	// versionHeader is the TLS PEM key header that contains the KEK version
+	versionHeader = "kek-version"
 )
 
 // PEMKeyHeaderManager is something that needs to know about PEM headers when reading
 // or writing TLS keys.
 type PEMKeyHeaderManager interface {
-	SetCurrentHeaders(map[string]string, []byte) error
-	GetNewHeaders([]byte) (map[string]string, func(), error)
+	SetCurrentHeaders(map[string]string, KEKData) error
+	GetNewHeaders(KEKData) (map[string]string, func(), error)
 }
 
 // KeyReader reads a TLS cert and key from disk
@@ -36,24 +39,25 @@ type KeyReader interface {
 
 // KeyWriter writes a TLS key and cert to disk
 type KeyWriter interface {
-	Write([]byte, []byte, *KEKUpdate) error
+	Write([]byte, []byte, *KEKData) error
 	UpdateHeaders(PEMKeyHeaderManager) error
-	RotateKEK([]byte) error
+	RotateKEK(KEKData) error
 	Target() string
 }
 
-// KEKUpdate provides an optional update to the kek when writing.  The structure
+// KEKData provides an optional update to the kek when writing.  The structure
 // is needed so that we can tell the difference between "do not encrypt anymore"
 // and there is "no update".
-type KEKUpdate struct {
-	KEK []byte
+type KEKData struct {
+	KEK     []byte
+	Version uint64
 }
 
 // KeyReadWriter is an object that knows how to read and write TLS keys and certs to disk,
-// optionally encrypted and while preserving existing PEM headers.
+// optionally encrypted and optionally updating PEM headers.
 type KeyReadWriter struct {
 	mu            sync.Mutex
-	kek           []byte
+	kekData       KEKData
 	paths         CertPaths
 	headerManager PEMKeyHeaderManager
 }
@@ -61,7 +65,7 @@ type KeyReadWriter struct {
 // NewKeyReadWriter creates a new KeyReadWriter
 func NewKeyReadWriter(paths CertPaths, kek []byte, headerManager PEMKeyHeaderManager) *KeyReadWriter {
 	return &KeyReadWriter{
-		kek:           kek,
+		kekData:       KEKData{KEK: kek},
 		paths:         paths,
 		headerManager: headerManager,
 	}
@@ -75,8 +79,15 @@ func (k *KeyReadWriter) Read() ([]byte, []byte, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	if version, ok := keyBlock.Headers[versionHeader]; ok {
+		if versionInt, err := strconv.ParseUint(version, 10, 64); err == nil {
+			k.kekData.Version = versionInt
+		}
+	}
+	delete(keyBlock.Headers, versionHeader)
+
 	if k.headerManager != nil {
-		if err := k.headerManager.SetCurrentHeaders(keyBlock.Headers, k.kek); err != nil {
+		if err := k.headerManager.SetCurrentHeaders(keyBlock.Headers, k.kekData); err != nil {
 			return nil, nil, errors.Wrap(err, "unable to read TLS key headers")
 		}
 	}
@@ -88,7 +99,7 @@ func (k *KeyReadWriter) Read() ([]byte, []byte, error) {
 }
 
 // RotateKEK re-encrypts the key with a new KEK
-func (k *KeyReadWriter) RotateKEK(newKEK []byte) error {
+func (k *KeyReadWriter) RotateKEK(kekData KEKData) error {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	keyBlock, err := k.readKey()
@@ -96,11 +107,11 @@ func (k *KeyReadWriter) RotateKEK(newKEK []byte) error {
 		return err
 	}
 
-	if err := k.writeKey(keyBlock, newKEK, k.headerManager); err != nil {
+	if err := k.writeKey(keyBlock, kekData, k.headerManager); err != nil {
 		return err
 	}
 
-	k.kek = newKEK
+	k.kekData = kekData
 	return nil
 }
 
@@ -116,20 +127,21 @@ func (k *KeyReadWriter) UpdateHeaders(hm PEMKeyHeaderManager) error {
 
 	var onSuccess func()
 	if hm != nil {
-		headers, successFunc, err := hm.GetNewHeaders(k.kek)
+		headers, successFunc, err := hm.GetNewHeaders(k.kekData)
 		if err != nil {
 			return err
 		}
 		// we WANT any encryption headers
 		for key, value := range keyBlock.Headers {
 			normalizedKey := strings.TrimSpace(strings.ToLower(key))
-			if normalizedKey == "proc-type" || normalizedKey == "dek-info" {
+			if normalizedKey == "proc-type" || normalizedKey == "dek-info" || key == versionHeader {
 				headers[key] = value
 			}
 		}
 		onSuccess = successFunc
 		keyBlock.Headers = headers
 	}
+	keyBlock.Headers[versionHeader] = strconv.FormatUint(k.kekData.Version, 10)
 
 	if err = ioutils.AtomicWriteFile(k.paths.Key, pem.EncodeToMemory(keyBlock), keyPerms); err != nil {
 		return err
@@ -145,7 +157,7 @@ func (k *KeyReadWriter) UpdateHeaders(hm PEMKeyHeaderManager) error {
 // the KEK while writing, if an updated KEK is provided.  If the pointer to the
 // update KEK is nil, then we don't update. If the updated KEK itself is nil,
 // then we update the KEK to be nil (data should be unencrypted).
-func (k *KeyReadWriter) Write(certBytes, plaintextKeyBytes []byte, kekUpdate *KEKUpdate) error {
+func (k *KeyReadWriter) Write(certBytes, plaintextKeyBytes []byte, kekData *KEKData) error {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 
@@ -160,15 +172,14 @@ func (k *KeyReadWriter) Write(certBytes, plaintextKeyBytes []byte, kekUpdate *KE
 		return errors.New("invalid PEM-encoded private key")
 	}
 
-	useKEK := k.kek
-	if kekUpdate != nil {
-		useKEK = kekUpdate.KEK
+	if kekData == nil {
+		kekData = &k.kekData
 	}
-	if err := k.writeKey(keyBlock, useKEK, k.headerManager); err != nil {
+	if err := k.writeKey(keyBlock, *kekData, k.headerManager); err != nil {
 		return err
 	}
 
-	k.kek = useKEK
+	k.kekData = *kekData
 	return ioutils.AtomicWriteFile(k.paths.Cert, certBytes, certPerms)
 }
 
@@ -205,7 +216,7 @@ func (k *KeyReadWriter) readKey() (*pem.Block, error) {
 		return keyBlock, nil
 	}
 
-	derBytes, err := x509.DecryptPEMBlock(keyBlock, k.kek)
+	derBytes, err := x509.DecryptPEMBlock(keyBlock, k.kekData.KEK)
 	if err != nil {
 		return nil, err
 	}
@@ -222,12 +233,12 @@ func (k *KeyReadWriter) readKey() (*pem.Block, error) {
 
 // writeKey takes an unencrypted keyblock and, if the kek is not nil, encrypts it before
 // writing it to disk.  If the kek is nil, writes it to disk unencrypted.
-func (k *KeyReadWriter) writeKey(keyBlock *pem.Block, writeKEK []byte, hm PEMKeyHeaderManager) error {
-	if writeKEK != nil {
+func (k *KeyReadWriter) writeKey(keyBlock *pem.Block, kekData KEKData, hm PEMKeyHeaderManager) error {
+	if kekData.KEK != nil {
 		encryptedPEMBlock, err := x509.EncryptPEMBlock(rand.Reader,
 			keyBlock.Type,
 			keyBlock.Bytes,
-			writeKEK,
+			kekData.KEK,
 			x509.PEMCipherAES256)
 		if err != nil {
 			return err
@@ -240,13 +251,14 @@ func (k *KeyReadWriter) writeKey(keyBlock *pem.Block, writeKEK []byte, hm PEMKey
 
 	var onSuccess func()
 	if hm != nil {
-		headers, successFunc, err := hm.GetNewHeaders(writeKEK)
+		headers, successFunc, err := hm.GetNewHeaders(kekData)
 		if err != nil {
 			return err
 		}
 		mergePEMHeaders(keyBlock.Headers, headers)
 		onSuccess = successFunc
 	}
+	keyBlock.Headers[versionHeader] = strconv.FormatUint(kekData.Version, 10)
 
 	if err := ioutils.AtomicWriteFile(k.paths.Key, pem.EncodeToMemory(keyBlock), keyPerms); err != nil {
 		return err

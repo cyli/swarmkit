@@ -199,7 +199,7 @@ func (rca *RootCA) RequestAndSaveNewCertificates(ctx context.Context, kw KeyWrit
 		return nil, err
 	}
 
-	var kekUpdate *KEKUpdate
+	var kekUpdate *KEKData
 	for i := 0; i < 5; i++ {
 		kekUpdate, err = rca.getKEKUpdate(ctx, X509Cert, tlsKeyPair, r)
 		if err == nil {
@@ -217,7 +217,7 @@ func (rca *RootCA) RequestAndSaveNewCertificates(ctx context.Context, kw KeyWrit
 	return &tlsKeyPair, nil
 }
 
-func (rca *RootCA) getKEKUpdate(ctx context.Context, cert *x509.Certificate, keypair tls.Certificate, r remotes.Remotes) (*KEKUpdate, error) {
+func (rca *RootCA) getKEKUpdate(ctx context.Context, cert *x509.Certificate, keypair tls.Certificate, r remotes.Remotes) (*KEKData, error) {
 	var managerRole bool
 	for _, ou := range cert.Subject.OrganizationalUnit {
 		if ou == ManagerRole {
@@ -243,12 +243,12 @@ func (rca *RootCA) getKEKUpdate(ctx context.Context, cert *x509.Certificate, key
 			return nil, err
 		}
 		r.Observe(peer, remotes.DefaultObservationWeight)
-		return &KEKUpdate{KEK: response.UnlockKey}, nil
+		return &KEKData{KEK: response.UnlockKey, Version: response.Version.Index}, nil
 	}
 
 	// If this is a worker, set to never encrypt. We always want to set to the lock key to nil,
 	// in case this was a manager that was demoted to a worker.
-	return &KEKUpdate{}, nil
+	return &KEKData{}, nil
 }
 
 // PrepareCSR creates a CFSSL Sign Request based on the given raw CSR and

@@ -357,22 +357,35 @@ func TestGetUnlockKey(t *testing.T) {
 	tc := testutils.NewTestCA(t)
 	defer tc.Stop()
 
+	var cluster *api.Cluster
+	tc.MemoryStore.View(func(tx store.ReadTx) {
+		clusters, err := store.FindClusters(tx, store.ByName(store.DefaultClusterName))
+		require.NoError(t, err)
+		cluster = clusters[0]
+	})
+
 	resp, err := tc.CAClients[0].GetUnlockKey(context.Background(), &api.GetUnlockKeyRequest{})
-	assert.NoError(t, err)
-	assert.Nil(t, resp.UnlockKey)
+	require.NoError(t, err)
+	require.Nil(t, resp.UnlockKey)
+	require.Equal(t, cluster.Meta.Version, resp.Version)
 
 	// Update the unlock key
-	assert.NoError(t, tc.MemoryStore.Update(func(tx store.Tx) error {
-		clusters, _ := store.FindClusters(tx, store.ByName(store.DefaultClusterName))
-		clusters[0].Spec.EncryptionConfig.AutoLockManagers = true
-		clusters[0].UnlockKeys = []*api.EncryptionKey{{
+	require.NoError(t, tc.MemoryStore.Update(func(tx store.Tx) error {
+		cluster = store.GetCluster(tx, cluster.ID)
+		cluster.Spec.EncryptionConfig.AutoLockManagers = true
+		cluster.UnlockKeys = []*api.EncryptionKey{{
 			Subsystem: ca.ManagerRole,
 			Key:       []byte("secret"),
 		}}
-		return store.UpdateCluster(tx, clusters[0])
+		return store.UpdateCluster(tx, cluster)
 	}))
 
+	tc.MemoryStore.View(func(tx store.ReadTx) {
+		cluster = store.GetCluster(tx, cluster.ID)
+	})
+
 	resp, err = tc.CAClients[0].GetUnlockKey(context.Background(), &api.GetUnlockKeyRequest{})
-	assert.NoError(t, err)
-	assert.Equal(t, resp.UnlockKey, []byte("secret"))
+	require.NoError(t, err)
+	require.Equal(t, resp.UnlockKey, []byte("secret"))
+	require.Equal(t, cluster.Meta.Version, resp.Version)
 }

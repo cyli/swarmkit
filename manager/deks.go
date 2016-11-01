@@ -29,22 +29,22 @@ type RaftDEKData struct {
 type RaftDEKPEMHeadersManager struct {
 	mu        sync.Mutex
 	data      RaftDEKData
-	cachedKEK []byte
+	cachedKEK ca.KEKData
 }
 
 // NewRaftDEKPEMHeadersManager creates a new RaftDEKPEMHeadersManager given some data to start with
-func NewRaftDEKPEMHeadersManager(data RaftDEKData, kek []byte) *RaftDEKPEMHeadersManager {
+func NewRaftDEKPEMHeadersManager(data RaftDEKData, kekData ca.KEKData) *RaftDEKPEMHeadersManager {
 	if data.CurrentDEK == nil {
 		data.CurrentDEK = encryption.GenerateSecretKey()
 	}
 	return &RaftDEKPEMHeadersManager{
 		data:      data,
-		cachedKEK: kek,
+		cachedKEK: kekData,
 	}
 }
 
 // SetCurrentHeaders loads the state of the DEK manager given the current TLS headers
-func (r *RaftDEKPEMHeadersManager) SetCurrentHeaders(headers map[string]string, kek []byte) error {
+func (r *RaftDEKPEMHeadersManager) SetCurrentHeaders(headers map[string]string, kekData ca.KEKData) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -52,13 +52,13 @@ func (r *RaftDEKPEMHeadersManager) SetCurrentHeaders(headers map[string]string, 
 	var err error
 
 	if currentDEKStr, ok := headers[pemHeaderRaftDEK]; ok {
-		data.CurrentDEK, err = decodePEMHeaderValue(currentDEKStr, kek)
+		data.CurrentDEK, err = decodePEMHeaderValue(currentDEKStr, kekData.KEK)
 		if err != nil {
 			return err
 		}
 	}
 	if pendingDEKStr, ok := headers[pemHeaderRaftPendingDEK]; ok {
-		data.PendingDEK, err = decodePEMHeaderValue(pendingDEKStr, kek)
+		data.PendingDEK, err = decodePEMHeaderValue(pendingDEKStr, kekData.KEK)
 		if err != nil {
 			return err
 		}
@@ -70,12 +70,12 @@ func (r *RaftDEKPEMHeadersManager) SetCurrentHeaders(headers map[string]string, 
 
 	_, data.NeedsRotation = headers[pemHeaderRaftDEKNeedsRotation]
 	r.data = data
-	r.cachedKEK = kek
+	r.cachedKEK = kekData
 	return nil
 }
 
 // GetNewHeaders returns new headers given the current KEK
-func (r *RaftDEKPEMHeadersManager) GetNewHeaders(kek []byte) (map[string]string, func(), error) {
+func (r *RaftDEKPEMHeadersManager) GetNewHeaders(kekData ca.KEKData) (map[string]string, func(), error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -85,7 +85,7 @@ func (r *RaftDEKPEMHeadersManager) GetNewHeaders(kek []byte) (map[string]string,
 		pemHeaderRaftPendingDEK: r.data.PendingDEK,
 	} {
 		if contents != nil {
-			dekStr, err := encodePEMHeaderValue(contents, kek)
+			dekStr, err := encodePEMHeaderValue(contents, kekData.KEK)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -95,7 +95,7 @@ func (r *RaftDEKPEMHeadersManager) GetNewHeaders(kek []byte) (map[string]string,
 
 	// if we go from unencrypted to encrypted, queue a DEK rotation
 	needsRotation := r.data.NeedsRotation
-	if r.cachedKEK == nil && kek != nil {
+	if r.cachedKEK.KEK == nil && kekData.KEK != nil && r.cachedKEK.Version < kekData.Version {
 		needsRotation = true
 	}
 
@@ -107,13 +107,13 @@ func (r *RaftDEKPEMHeadersManager) GetNewHeaders(kek []byte) (map[string]string,
 	return headers, func() {
 		r.mu.Lock()
 		defer r.mu.Unlock()
-		r.cachedKEK = kek
+		r.cachedKEK = kekData
 		r.data.NeedsRotation = needsRotation
 	}, nil
 }
 
 // CurrentState returns the current state of the raft DEKs
-func (r *RaftDEKPEMHeadersManager) CurrentState() (RaftDEKData, []byte) {
+func (r *RaftDEKPEMHeadersManager) CurrentState() (RaftDEKData, ca.KEKData) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.data, r.cachedKEK
@@ -200,38 +200,39 @@ func (r *RaftDEKManager) MaybeDoRotation(cb func(dek []byte) error) (bool, error
 	return true, nil
 }
 
-// MaybeUpdateKEK does a KEK rotation if one is required
-func (r *RaftDEKManager) MaybeUpdateKEK(newKEK []byte) ([]byte, bool, error) {
+// MaybeUpdateKEK does a KEK rotation if one is required.  Returns whether
+// the kek was updated, and whether it went from unlocked to locked.
+func (r *RaftDEKManager) MaybeUpdateKEK(newKEK ca.KEKData) (bool, bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	_, currentKEK := r.hm.CurrentState()
 	// re-encrypt first - this will set `NeedsRotation to `true` if we are
 	// going from a nil KEK to a non-nil KEK
-	if subtle.ConstantTimeCompare(currentKEK, newKEK) == 1 {
-		return nil, false, nil
+	if currentKEK.Version >= newKEK.Version || subtle.ConstantTimeCompare(currentKEK.KEK, newKEK.KEK) == 1 {
+		return false, false, nil
 	}
-	return currentKEK, true, r.kw.RotateKEK(newKEK)
+	return true, currentKEK.KEK == nil, r.kw.RotateKEK(newKEK)
 }
 
-func (r *RaftDEKManager) maybeUpdatePending() (RaftDEKData, []byte, bool, error) {
+func (r *RaftDEKManager) maybeUpdatePending() (RaftDEKData, ca.KEKData, bool, error) {
 	// if we can't update the rotation, just return - we need to wait for the next
-	data, kek := r.hm.CurrentState()
+	data, kekData := r.hm.CurrentState()
 	if !data.NeedsRotation || data.PendingDEK != nil {
-		return data, kek, false, nil
+		return data, kekData, false, nil
 	}
 
 	data = RaftDEKData{
 		CurrentDEK: data.CurrentDEK,
 		PendingDEK: encryption.GenerateSecretKey(),
 	}
-	newHM := NewRaftDEKPEMHeadersManager(data, kek)
+	newHM := NewRaftDEKPEMHeadersManager(data, kekData)
 	if err := r.kw.UpdateHeaders(newHM); err != nil {
-		return RaftDEKData{}, nil, true, err
+		return RaftDEKData{}, ca.KEKData{}, true, err
 	}
 
 	r.hm = newHM
-	return data, kek, true, nil
+	return data, kekData, true, nil
 }
 
 // MaybeUpdatePending sees if we need to update the pending key based on whether

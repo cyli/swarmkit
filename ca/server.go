@@ -76,22 +76,21 @@ func (s *Server) GetUnlockKey(ctx context.Context, request *api.GetUnlockKeyRequ
 		"method": "GetUnlockKey",
 	})
 
-	var managerUnlockKey []byte
+	resp := api.GetUnlockKeyResponse{}
 	s.store.View(func(tx store.ReadTx) {
 		cluster := store.GetCluster(tx, s.securityConfig.ClientTLSCreds.Organization())
+		resp.Version = cluster.Meta.Version
 		if cluster.Spec.EncryptionConfig.AutoLockManagers {
 			for _, encryptionKey := range cluster.UnlockKeys {
 				if encryptionKey.Subsystem == ManagerRole {
-					managerUnlockKey = encryptionKey.Key
+					resp.UnlockKey = encryptionKey.Key
 					return
 				}
 			}
 		}
 	})
 
-	return &api.GetUnlockKeyResponse{
-		UnlockKey: managerUnlockKey,
-	}, nil
+	return &resp, nil
 }
 
 // NodeCertificateStatus returns the current issuance status of an issuance request identified by the nodeID

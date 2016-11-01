@@ -31,6 +31,7 @@ func TestKeyReadWriter(t *testing.T) {
 		readCert, readKey, err := k.Read()
 		require.NoError(t, err)
 		require.Equal(t, cert, readCert)
+		// get the version, because we strip it from the return headers
 		require.Equal(t, expectedKey, readKey, "Expected %s, Got %s", string(expectedKey), string(readKey))
 		return k
 	}
@@ -41,7 +42,7 @@ func TestKeyReadWriter(t *testing.T) {
 	_, _, err = k.Read()
 	require.Error(t, err)
 
-	// can write an unencrypted key
+	// can write an unencrypted key with no updates
 	require.NoError(t, k.Write(cert, expectedKey, nil))
 
 	// can read unencrypted
@@ -58,7 +59,7 @@ func TestKeyReadWriter(t *testing.T) {
 	k = checkCanReadWithKEK([]byte("original kek"))
 
 	// we can update the kek and write at the same time
-	require.NoError(t, k.Write(cert, key, &ca.KEKUpdate{KEK: []byte("new kek!")}))
+	require.NoError(t, k.Write(cert, key, &ca.KEKData{KEK: []byte("new kek!")}))
 
 	// the same kek can still read, and will continue to write with this key if
 	// no further kek updates are provided
@@ -78,28 +79,23 @@ func TestKeyReadWriter(t *testing.T) {
 	k = checkCanReadWithKEK([]byte("new kek!"))
 
 	// we can also change the kek back to nil, which means the key is unencrypted
-	require.NoError(t, k.Write(cert, key, &ca.KEKUpdate{KEK: nil}))
+	require.NoError(t, k.Write(cert, key, &ca.KEKData{KEK: nil}))
 	checkCanReadWithKEK(nil)
-
-	// just read the key from disk and ensure that it's unencrypted, for sanity
-	keyBytes, err := ioutil.ReadFile(path.Node.Key)
-	require.NoError(t, err)
-	require.Equal(t, expectedKey, keyBytes)
 }
 
 type pemHeaderManager struct {
-	setHeaders func(map[string]string, []byte) error
-	newHeaders func([]byte) (map[string]string, func(), error)
+	setHeaders func(map[string]string, ca.KEKData) error
+	newHeaders func(ca.KEKData) (map[string]string, func(), error)
 }
 
-func (p pemHeaderManager) SetCurrentHeaders(h map[string]string, k []byte) error {
+func (p pemHeaderManager) SetCurrentHeaders(h map[string]string, k ca.KEKData) error {
 	if p.setHeaders != nil {
 		return p.setHeaders(h, k)
 	}
 	return fmt.Errorf("set header error")
 }
 
-func (p pemHeaderManager) GetNewHeaders(k []byte) (map[string]string, func(), error) {
+func (p pemHeaderManager) GetNewHeaders(k ca.KEKData) (map[string]string, func(), error) {
 	if p.newHeaders != nil {
 		return p.newHeaders(k)
 	}
@@ -127,7 +123,7 @@ func TestKeyReadWriterWithPemHeaderManager(t *testing.T) {
 	// if if getting new headers fail, writing a key fails, and the key does not rotate
 	var count int
 
-	k := ca.NewKeyReadWriter(path.Node, nil, pemHeaderManager{newHeaders: func([]byte) (map[string]string, func(), error) {
+	k := ca.NewKeyReadWriter(path.Node, nil, pemHeaderManager{newHeaders: func(ca.KEKData) (map[string]string, func(), error) {
 		if count == 0 {
 			count++
 			return nil, nil, fmt.Errorf("fail")
@@ -135,16 +131,16 @@ func TestKeyReadWriterWithPemHeaderManager(t *testing.T) {
 		return nil, nil, nil
 	}})
 	// first write will fail
-	require.Error(t, k.Write(cert, key, &ca.KEKUpdate{KEK: []byte("failed kek")}))
+	require.Error(t, k.Write(cert, key, &ca.KEKData{KEK: []byte("failed kek")}))
 	// second write will succeed, using the original kek (nil)
 	require.NoError(t, k.Write(cert, key, nil))
 
 	var (
 		headers map[string]string
-		kek     []byte
+		kek     ca.KEKData
 	)
 
-	k = ca.NewKeyReadWriter(path.Node, nil, pemHeaderManager{setHeaders: func(h map[string]string, k []byte) error {
+	k = ca.NewKeyReadWriter(path.Node, nil, pemHeaderManager{setHeaders: func(h map[string]string, k ca.KEKData) error {
 		headers = h
 		kek = k
 		return nil
@@ -152,26 +148,26 @@ func TestKeyReadWriterWithPemHeaderManager(t *testing.T) {
 
 	_, _, err = k.Read()
 	require.NoError(t, err)
-	require.Nil(t, kek)
+	require.Equal(t, ca.KEKData{}, kek)
 	require.Equal(t, keyBlock.Headers, headers)
 
 	// writing new headers is called with existing headers, and will write a key that has the headers
 	// returned by the header update function
-	k = ca.NewKeyReadWriter(path.Node, []byte("oldKek"), pemHeaderManager{newHeaders: func(kek []byte) (map[string]string, func(), error) {
-		require.Equal(t, []byte("newKEK"), kek)
+	k = ca.NewKeyReadWriter(path.Node, []byte("oldKek"), pemHeaderManager{newHeaders: func(kek ca.KEKData) (map[string]string, func(), error) {
+		require.Equal(t, []byte("newKEK"), kek.KEK)
 		return map[string]string{"updated": "headers"}, nil, nil
 	}})
-	require.NoError(t, k.Write(cert, key, &ca.KEKUpdate{KEK: []byte("newKEK")}))
+	require.NoError(t, k.Write(cert, key, &ca.KEKData{KEK: []byte("newKEK")}))
 
 	// make sure headers were correctly set
-	k = ca.NewKeyReadWriter(path.Node, []byte("newKEK"), pemHeaderManager{setHeaders: func(h map[string]string, k []byte) error {
+	k = ca.NewKeyReadWriter(path.Node, []byte("newKEK"), pemHeaderManager{setHeaders: func(h map[string]string, k ca.KEKData) error {
 		headers = h
 		kek = k
 		return nil
 	}})
 	_, _, err = k.Read()
 	require.NoError(t, err)
-	require.Equal(t, []byte("newKEK"), kek)
+	require.Equal(t, []byte("newKEK"), kek.KEK)
 	require.Equal(t, map[string]string{"updated": "headers"}, headers)
 }
 
@@ -193,17 +189,17 @@ func TestKeyReadWriterRotateKEK(t *testing.T) {
 	require.NoError(t, ca.NewKeyReadWriter(path.Node, nil, nil).Write(cert, key, nil))
 
 	// if if getting new headers fail, rotating a KEK fails, and the kek does not rotate
-	k := ca.NewKeyReadWriter(path.Node, nil, pemHeaderManager{newHeaders: func(kek []byte) (map[string]string, func(), error) {
+	k := ca.NewKeyReadWriter(path.Node, nil, pemHeaderManager{newHeaders: func(ca.KEKData) (map[string]string, func(), error) {
 		return nil, nil, fmt.Errorf("fail")
 	}})
-	require.Error(t, k.RotateKEK([]byte("failed kek")))
+	require.Error(t, k.RotateKEK(ca.KEKData{KEK: []byte("failed kek"), Version: uint64(3)}))
 
 	// writing new headers will write a key that has the headers returned by the header update function
-	k = ca.NewKeyReadWriter(path.Node, []byte("oldKEK"), pemHeaderManager{newHeaders: func(kek []byte) (map[string]string, func(), error) {
-		require.Equal(t, []byte("newKEK"), kek)
+	k = ca.NewKeyReadWriter(path.Node, []byte("oldKEK"), pemHeaderManager{newHeaders: func(kek ca.KEKData) (map[string]string, func(), error) {
+		require.Equal(t, []byte("newKEK"), kek.KEK)
 		return map[string]string{"updated": "headers"}, nil, nil
 	}})
-	require.NoError(t, k.RotateKEK([]byte("newKEK")))
+	require.NoError(t, k.RotateKEK(ca.KEKData{KEK: []byte("newKEK"), Version: uint64(2)}))
 
 	// ensure the key has been re-encrypted and we can read it
 	k = ca.NewKeyReadWriter(path.Node, nil, nil)
@@ -212,7 +208,7 @@ func TestKeyReadWriterRotateKEK(t *testing.T) {
 
 	var headers map[string]string
 
-	k = ca.NewKeyReadWriter(path.Node, []byte("newKEK"), pemHeaderManager{setHeaders: func(h map[string]string, k []byte) error {
+	k = ca.NewKeyReadWriter(path.Node, []byte("newKEK"), pemHeaderManager{setHeaders: func(h map[string]string, _ ca.KEKData) error {
 		headers = h
 		return nil
 	}})

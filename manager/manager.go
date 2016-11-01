@@ -508,14 +508,14 @@ func (m *Manager) updateKEK(ctx context.Context, cluster *api.Cluster, r remotes
 		"node.role": ca.ManagerRole,
 	})
 
-	var kek []byte
+	kekData := ca.KEKData{Version: cluster.Meta.Version.Index}
 	for _, encryptionKey := range cluster.UnlockKeys {
 		if encryptionKey.Subsystem == ca.ManagerRole {
-			kek = encryptionKey.Key
+			kekData.KEK = encryptionKey.Key
 			break
 		}
 	}
-	oldKEK, updated, err := m.keyRotator.MaybeUpdateKEK(kek)
+	updated, unlocktoLock, err := m.keyRotator.MaybeUpdateKEK(kekData)
 	if err != nil {
 		logger.WithError(err).Errorf("failed to re-encrypt TLS key")
 		return err
@@ -523,7 +523,7 @@ func (m *Manager) updateKEK(ctx context.Context, cluster *api.Cluster, r remotes
 	if updated {
 		logger.Debug("rotated KEK")
 	}
-	if updated && oldKEK == nil {
+	if unlocktoLock {
 		go func() {
 			// a best effort attempt to update the TLS certificate
 			if err := ca.RenewTLSConfigNow(ctx, securityConfig, r); err != nil {
@@ -729,10 +729,10 @@ func (m *Manager) becomeLeader(ctx context.Context) {
 	initialCAConfig.ExternalCAs = m.config.ExternalCAs
 
 	var unlockKeys []*api.EncryptionKey
-	if _, currentKEK := m.config.PEMHeadersManager.CurrentState(); currentKEK != nil {
+	if _, currentKEK := m.config.PEMHeadersManager.CurrentState(); currentKEK.KEK != nil {
 		unlockKeys = []*api.EncryptionKey{{
 			Subsystem: ca.ManagerRole,
-			Key:       currentKEK,
+			Key:       currentKEK.KEK,
 		}}
 	}
 

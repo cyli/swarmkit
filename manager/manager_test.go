@@ -63,7 +63,7 @@ func TestManager(t *testing.T) {
 		AutoLockManagers: true,
 		PEMHeadersManager: NewRaftDEKPEMHeadersManager(
 			RaftDEKData{CurrentDEK: []byte("dek")},
-			[]byte("kek"),
+			ca.KEKData{KEK: []byte("kek")},
 		),
 	})
 	assert.NoError(t, err)
@@ -277,7 +277,9 @@ func TestManagerLockUnlock(t *testing.T) {
 	keyBlock, _ := pem.Decode(key)
 	require.NotNil(t, keyBlock)
 	require.False(t, x509.IsEncryptedPEMBlock(keyBlock))
-	require.Len(t, keyBlock.Headers, 1)
+	require.Len(t, keyBlock.Headers, 2)
+	// the first version is whatever
+	require.Equal(t, "0", keyBlock.Headers["kek-version"])
 	currentDEK, err := decodePEMHeaderValue(keyBlock.Headers[pemHeaderRaftDEK], nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, currentDEK)
@@ -292,7 +294,7 @@ func TestManagerLockUnlock(t *testing.T) {
 
 		spec := cluster.Spec.Copy()
 		spec.EncryptionConfig.AutoLockManagers = true
-		_, err = client.UpdateCluster(ctx, &api.UpdateClusterRequest{
+		updateResp, err := client.UpdateCluster(ctx, &api.UpdateClusterRequest{
 			ClusterID:      cluster.ID,
 			ClusterVersion: &cluster.Meta.Version,
 			Spec:           spec,
@@ -301,6 +303,7 @@ func TestManagerLockUnlock(t *testing.T) {
 			continue
 		}
 		if err == nil {
+			cluster = updateResp.Cluster
 			break
 		}
 	}
@@ -332,15 +335,16 @@ func TestManagerLockUnlock(t *testing.T) {
 
 	// Don't know how fast the process was - if the DEK finished rotating and
 	// the snapshot is done, then there'd only be one DEK header.  Either way,
-	// there will be 2 key encryption headers.
-	if len(keyBlock.Headers) > 3 {
-		require.Len(t, keyBlock.Headers, 4)
+	// there will be 2 key encryption headers, and 1 version header
+	if len(keyBlock.Headers) > 4 {
+		require.Len(t, keyBlock.Headers, 5)
 		stillCurrentDEK, err := decodePEMHeaderValue(keyBlock.Headers[pemHeaderRaftDEK], unlockKeyResp.UnlockKey)
 		require.NoError(t, err)
 		require.Equal(t, currentDEK, stillCurrentDEK)
 		pendingDEK, err := decodePEMHeaderValue(keyBlock.Headers[pemHeaderRaftPendingDEK], unlockKeyResp.UnlockKey)
 		require.NoError(t, err)
 		require.NotEqual(t, currentDEK, pendingDEK)
+		require.Equal(t, fmt.Sprintf("%d", unlockKeyResp.Version.Index), keyBlock.Headers["kek-version"])
 	}
 
 	require.NoError(t, raftutils.PollFuncWithTimeout(nil, func() error {
@@ -358,12 +362,12 @@ func TestManagerLockUnlock(t *testing.T) {
 		if bytes.Equal(tlsKeyPrivateBytes, derBytes) {
 			return fmt.Errorf("TLS key has not been renewed")
 		}
-		tlsKeyPrivateBytes = derBytes
 
-		if len(keyBlock.Headers) != 3 {
+		if len(keyBlock.Headers) != 4 { // 2 encryption ones, 1 version, 1 DEK
 			return fmt.Errorf("DEK not finished rotating")
 		}
 
+		tlsKeyPrivateBytes = derBytes
 		return nil
 	}, 1*time.Second))
 
@@ -371,6 +375,8 @@ func TestManagerLockUnlock(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, nowCurrentDEK)
 	require.NotEqual(t, nowCurrentDEK, currentDEK)
+	// Should not have messed with version:
+	require.Equal(t, fmt.Sprintf("%d", unlockKeyResp.Version.Index), keyBlock.Headers["kek-version"])
 
 	// verify that the snapshot is readable with the new DEK
 	encrypter, decrypter := encryption.Defaults(nowCurrentDEK)
