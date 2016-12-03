@@ -151,6 +151,7 @@ func New(c *Config) (*Node, error) {
 		return nil, err
 	}
 	if err == nil {
+		logrus.Infof("NODE-DEBUGGING: loading up the state file %s: %s", stateFile, string(dt))
 		if err := json.Unmarshal(dt, &p); err != nil {
 			return nil, err
 		}
@@ -240,6 +241,7 @@ func (n *Node) run(ctx context.Context) (err error) {
 			case <-ctx.Done():
 				return
 			case node := <-n.notifyNodeChange:
+				log.G(ctx).Infof("NODE-DEBUGGING: node notified change %v, %v", node.Spec, node.Certificate.Status.State)
 				// If the server is sending us a ForceRenewal State, renew
 				if node.Certificate.Status.State == api.IssuanceStateRotate {
 					renewCert()
@@ -296,11 +298,13 @@ func (n *Node) run(ctx context.Context) (err error) {
 	wg.Add(2)
 	go func() {
 		managerErr = n.runManager(ctx, securityConfig, managerReady) // store err and loop
+		log.G(ctx).Infof("NODE-DEBUGGING: killing node because of manager error %v", managerErr)
 		wg.Done()
 		cancel()
 	}()
 	go func() {
 		agentErr = n.runAgent(ctx, db, securityConfig.ClientTLSCreds, agentReady)
+		log.G(ctx).Infof("NODE-DEBUGGING: killing node because of agent error %v", agentErr)
 		wg.Done()
 		cancel()
 	}()
@@ -308,18 +312,23 @@ func (n *Node) run(ctx context.Context) (err error) {
 	go func() {
 		<-agentReady
 		if role == ca.ManagerRole {
+			log.G(ctx).Infof("NODE-DEBUGGING: starting to wait for manager ready")
 			<-managerReady
+			log.G(ctx).Infof("NODE-DEBUGGING: manager-ready called")
 		}
 		close(n.ready)
 	}()
 
 	wg.Wait()
 	if managerErr != nil && managerErr != context.Canceled {
+		log.G(ctx).Infof("NODE-DEBUGGING: node shutting down with manager error %v", managerErr)
 		return managerErr
 	}
 	if agentErr != nil && agentErr != context.Canceled {
+		log.G(ctx).Infof("NODE-DEBUGGING: node shutting down with agent error %v", agentErr)
 		return agentErr
 	}
+	log.G(ctx).Infof("NODE-DEBUGGING: node shutting down with error %v", err)
 	return err
 }
 
@@ -584,6 +593,7 @@ func (n *Node) initManagerConnection(ctx context.Context, ready chan<- struct{})
 			return err
 		}
 		if resp.Status == api.HealthCheckResponse_SERVING {
+			log.G(ctx).Infof("NODE-DEBUGGING: resp.Status == api.HealthCheckResponse_Serving")
 			break
 		}
 		time.Sleep(500 * time.Millisecond)
@@ -657,6 +667,7 @@ func (n *Node) runManager(ctx context.Context, securityConfig *ca.SecurityConfig
 		var runErr error
 		go func() {
 			runErr = m.Run(context.Background())
+			log.G(ctx).Infof("NODE-DEBUGGING: manager stopped running with error %v", runErr)
 			close(done)
 		}()
 
@@ -672,6 +683,7 @@ func (n *Node) runManager(ctx context.Context, securityConfig *ca.SecurityConfig
 			go func(ready chan struct{}) {
 				select {
 				case <-ready:
+					log.G(ctx).Infof("NODE-DEBUGGING: ready called - going to get remote api")
 					addr, err := n.RemoteAPIAddr()
 					if err != nil {
 						log.G(ctx).WithError(err).Errorf("get remote api addr")
@@ -695,12 +707,16 @@ func (n *Node) runManager(ctx context.Context, securityConfig *ca.SecurityConfig
 		case <-done:
 			// Fail out if m.Run() returns error, otherwise wait for
 			// role change.
+			log.G(ctx).Infof("NODE-DEBUGGING: Node done called, runErr: %v", runErr)
 			if runErr != nil && runErr != raft.ErrMemberRemoved {
 				err = runErr
 			} else {
+				log.G(ctx).Infof("NODE-DEBUGGING: Node: Waiting for role change after done")
 				err = <-roleChanged
+				log.G(ctx).Infof("NODE-DEBUGGING: Node: Role has changed (1): %v", err)
 			}
 		case err = <-roleChanged:
+			log.G(ctx).Infof("NODE-DEBUGGING: Node: Role has changed (2): %v", err)
 		}
 
 		n.Lock()
@@ -711,6 +727,7 @@ func (n *Node) runManager(ctx context.Context, securityConfig *ca.SecurityConfig
 		case <-done:
 		case <-ctx.Done():
 			err = ctx.Err()
+			log.G(ctx).Infof("NODE-DEBUGGING: Node: Ctx done: %v", err)
 			m.Stop(context.Background())
 			<-done
 		}
@@ -778,6 +795,7 @@ func (s *persistentRemotes) save() error {
 		return err
 	}
 	s.lastSavedState = remotes
+	logrus.Infof("NODE-DEBUGGING: saving the state file %s: %s", s.storePath, string(dt))
 	return ioutils.AtomicWriteFile(s.storePath, dt, 0600)
 }
 

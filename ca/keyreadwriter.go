@@ -2,7 +2,9 @@ package ca
 
 import (
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/pem"
 	"io/ioutil"
 	"os"
@@ -11,8 +13,7 @@ import (
 	"strings"
 	"sync"
 
-	"crypto/tls"
-
+	"github.com/Sirupsen/logrus"
 	"github.com/docker/swarmkit/ioutils"
 	"github.com/pkg/errors"
 )
@@ -124,6 +125,7 @@ func (k *KeyReadWriter) Read() ([]byte, []byte, error) {
 		return nil, nil, err
 	}
 
+	logrus.Infof("DEK-DEBUGGING: successfully read TLS key using KEK %s version %d", base64.RawStdEncoding.EncodeToString(k.kekData.KEK), k.kekData.Version)
 	if version, ok := keyBlock.Headers[versionHeader]; ok {
 		if versionInt, err := strconv.ParseUint(version, 10, 64); err == nil {
 			k.kekData.Version = versionInt
@@ -134,6 +136,7 @@ func (k *KeyReadWriter) Read() ([]byte, []byte, error) {
 	if k.headersObj != nil {
 		newHeaders, err := k.headersObj.UnmarshalHeaders(keyBlock.Headers, k.kekData)
 		if err != nil {
+			logrus.Infof("DEK-DEBUGGING: unable to read TLS headers using KEK %s\n%v", base64.RawStdEncoding.EncodeToString(k.kekData.KEK), keyBlock.Headers)
 			return nil, nil, errors.Wrap(err, "unable to read TLS key headers")
 		}
 		k.headersObj = newHeaders
@@ -317,6 +320,7 @@ func (k *KeyReadWriter) readKey() (*pem.Block, error) {
 	}
 
 	if !x509.IsEncryptedPEMBlock(keyBlock) {
+		logrus.Infof("DEK-DEBUGGING: TLS key was not encrypted: %v", keyBlock.Headers)
 		return keyBlock, nil
 	}
 
@@ -330,6 +334,9 @@ func (k *KeyReadWriter) readKey() (*pem.Block, error) {
 	if err != nil {
 		return nil, ErrInvalidKEK{Wrapped: err}
 	}
+
+	logrus.Infof("DEK-DEBUGGING: TLS was encrypted, and was successfully decrypted using KEK %s (%v)",
+		base64.RawStdEncoding.EncodeToString(k.kekData.KEK), k.kekData.KEK)
 	// remove encryption PEM headers
 	headers := make(map[string]string)
 	mergePEMHeaders(headers, keyBlock.Headers)
@@ -371,6 +378,12 @@ func (k *KeyReadWriter) writeKey(keyBlock *pem.Block, kekData KEKData, pkh PEMKe
 	if err := ioutils.AtomicWriteFile(k.paths.Key, pem.EncodeToMemory(keyBlock), keyPerms); err != nil {
 		return err
 	}
+
+	logrus.Infof("DEK-DEBUGGING: successfully write key with KEK %s, version %d (previous %s, version %d)",
+		base64.RawStdEncoding.EncodeToString(kekData.KEK), kekData.Version,
+		base64.RawStdEncoding.EncodeToString(k.kekData.KEK), k.kekData.Version,
+	)
+
 	k.kekData = kekData
 	k.headersObj = pkh
 	return nil

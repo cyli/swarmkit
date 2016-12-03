@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Sirupsen/logrus"
 	"github.com/coreos/etcd/raft/raftpb"
 	"github.com/coreos/etcd/wal"
 	"github.com/coreos/etcd/wal/walpb"
@@ -55,9 +56,11 @@ func (w *wrappedWAL) ReadAll() ([]byte, raftpb.HardState, []raftpb.Entry, error)
 	if err != nil {
 		return metadata, state, ents, err
 	}
+	logrus.Infof("DEK-DEBUGGING: ReadAll WAL: %d entries, hardstate (term %d commit %d)", len(ents), state.Term, state.Commit)
 	for i, ent := range ents {
 		ents[i].Data, err = encryption.Decrypt(ent.Data, w.decrypter)
 		if err != nil {
+			logrus.Infof("DEK-DEBUGGING: failed to decrypt entry index %d term %d", ents[i].Index, ents[i].Term)
 			return nil, raftpb.HardState{}, nil, err
 		}
 	}

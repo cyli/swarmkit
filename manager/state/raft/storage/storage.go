@@ -8,6 +8,9 @@ import (
 
 	"golang.org/x/net/context"
 
+	"encoding/base64"
+
+	"github.com/Sirupsen/logrus"
 	"github.com/coreos/etcd/pkg/fileutil"
 	"github.com/coreos/etcd/raft/raftpb"
 	"github.com/coreos/etcd/snap"
@@ -188,6 +191,9 @@ func (e *EncryptedRaftLogger) RotateEncryptionKey(newKey []byte) {
 	e.encoderMu.Lock()
 	defer e.encoderMu.Unlock()
 
+	logrus.Infof("DEK-DEBUGGING: Storage:  rotating encryption key from %s to %s",
+		base64.RawStdEncoding.EncodeToString(e.EncryptionKey), base64.RawStdEncoding.EncodeToString(newKey))
+
 	if e.wal != nil { // if the wal exists, the snapshotter exists
 		// We don't want to have to close the WAL, because we can't open a new one.
 		// We need to know the previous snapshot, because when you open a WAL you
@@ -215,6 +221,9 @@ func (e *EncryptedRaftLogger) SaveSnapshot(snapshot raftpb.Snapshot) error {
 	}
 
 	e.encoderMu.RLock()
+	key := e.EncryptionKey
+	logrus.Infof("DEK-DEBUGGING: Saving snapshot (index %d term %d) using encryption key %s",
+		walsnap.Index, walsnap.Term, base64.RawStdEncoding.EncodeToString(key))
 	if err := e.wal.SaveSnapshot(walsnap); err != nil {
 		e.encoderMu.RUnlock()
 		return err
@@ -229,6 +238,8 @@ func (e *EncryptedRaftLogger) SaveSnapshot(snapshot raftpb.Snapshot) error {
 	if err := e.wal.ReleaseLockTo(snapshot.Metadata.Index); err != nil {
 		return err
 	}
+	logrus.Infof("DEK-DEBUGGING: Finished snapshot (index %d term %d) using encryption key %s",
+		walsnap.Index, walsnap.Term, base64.RawStdEncoding.EncodeToString(key))
 	return nil
 }
 
@@ -338,6 +349,11 @@ func (e *EncryptedRaftLogger) SaveEntries(st raftpb.HardState, entries []raftpb.
 
 	if e.wal == nil {
 		return fmt.Errorf("raft WAL has either been closed or has never been created")
+	}
+	logrus.Infof("DEK-DEBUGGING: Saving %d entries with DEK %s, hard state (term %d commit %d)",
+		len(entries), base64.RawStdEncoding.EncodeToString(e.EncryptionKey), st.Term, st.Commit)
+	for _, entry := range entries {
+		logrus.Infof("DEK-DEBUGGING: Saving entry index %d term %d with DEK %s", entry.Index, entry.Term, base64.RawStdEncoding.EncodeToString(e.EncryptionKey))
 	}
 	return e.wal.Save(st, entries)
 }

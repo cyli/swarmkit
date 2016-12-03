@@ -3,6 +3,9 @@ package raft
 import (
 	"fmt"
 
+	"encoding/base64"
+
+	"github.com/Sirupsen/logrus"
 	"github.com/coreos/etcd/raft"
 	"github.com/coreos/etcd/raft/raftpb"
 	"github.com/docker/swarmkit/api"
@@ -31,12 +34,27 @@ func (n *Node) readFromDisk(ctx context.Context) (*raftpb.Snapshot, storage.WALD
 	if keys.PendingDEK != nil {
 		switch errors.Cause(err).(type) {
 		case nil:
+			logrus.Infof("DEK-DEBUGGING: successfully bootstrapped using pending DEK %s", base64.RawStdEncoding.EncodeToString(keys.PendingDEK))
 			if err = n.keyRotator.UpdateKeys(EncryptionKeys{CurrentDEK: keys.PendingDEK}); err != nil {
 				err = errors.Wrap(err, "previous key rotation was successful, but unable mark rotation as complete")
 			}
 		case encryption.ErrCannotDecrypt:
 			snap, walData, err = n.raftLogger.BootstrapFromDisk(ctx, keys.CurrentDEK)
+			if err != nil {
+				logrus.Infof("DEK-DEBUGGING: could not bootstrap using pending DEK %s or current DEK %s: %s",
+					base64.RawStdEncoding.EncodeToString(keys.PendingDEK), base64.RawStdEncoding.EncodeToString(keys.CurrentDEK),
+					err.Error())
+			} else {
+				logrus.Infof("DEK-DEBUGGING: successfully bootstrap using both pending DEK %s and current DEK %s",
+					base64.RawStdEncoding.EncodeToString(keys.PendingDEK), base64.RawStdEncoding.EncodeToString(keys.CurrentDEK))
+			}
 		}
+	} else if err != nil {
+		logrus.Infof("DEK-DEBUGGING: could not bootstrap using current DEK %s - no pending DEK: %s",
+			base64.RawStdEncoding.EncodeToString(keys.CurrentDEK), err.Error())
+	} else {
+		logrus.Infof("DEK-DEBUGGING: successfully bootstrapped using current DEK %s - no pending DEK",
+			base64.RawStdEncoding.EncodeToString(keys.CurrentDEK))
 	}
 
 	if err != nil {
@@ -57,6 +75,7 @@ func (n *Node) loadAndStart(ctx context.Context, forceNewCluster bool) error {
 		if err := n.restoreFromSnapshot(snapshot.Data, forceNewCluster); err != nil {
 			return err
 		}
+		logrus.Infof("DEK-DEBUGGING: on bootstrap, restored from snapshot index %d, term %d", snapshot.Metadata.Index, snapshot.Metadata.Term)
 	}
 
 	// Read logs to fully catch up store
@@ -164,6 +183,8 @@ func (n *Node) doSnapshot(ctx context.Context, raftConfig api.RaftConfig) {
 			})
 	}
 	snapshot.Membership.Removed = n.cluster.Removed()
+
+	logrus.Infof("DEK-DEBUGGING: start saving snapshot")
 
 	viewStarted := make(chan struct{})
 	n.asyncTasks.Add(1)

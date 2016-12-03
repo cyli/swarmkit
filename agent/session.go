@@ -66,6 +66,7 @@ func newSession(ctx context.Context, agent *Agent, delay time.Duration, sessionI
 		s.errs <- err
 		return s
 	}
+	log.G(ctx).Infof("AGENT-DEBUGGING: establishing new session: %v, selected %v", agent.config.Managers.Weights(), peer)
 	cc, err := grpc.Dial(peer.Addr,
 		grpc.WithTransportCredentials(agent.config.Credentials),
 		grpc.WithTimeout(dispatcherRPCTimeout),

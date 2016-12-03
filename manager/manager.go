@@ -391,6 +391,7 @@ func (m *Manager) Run(parent context.Context) error {
 	errCh := make(chan error, 1)
 	go func() {
 		err := m.raftNode.Run(ctx)
+		log.G(ctx).Infof("MANAGER-DEBUGGING: raft node stopped because: %v", err)
 		if err != nil {
 			errCh <- err
 			log.G(ctx).WithError(err).Error("raft node stopped")
@@ -410,16 +411,19 @@ func (m *Manager) Run(parent context.Context) error {
 	}
 
 	if err := raft.WaitForLeader(ctx, m.raftNode); err != nil {
+		log.G(ctx).Infof("MANAGER-DEBUGGING: wait for leader errored: %v", err)
 		return returnErr(err)
 	}
 
 	c, err := raft.WaitForCluster(ctx, m.raftNode)
 	if err != nil {
+		log.G(ctx).Infof("MANAGER-DEBUGGING: wait for cluster errored: %v", err)
 		return returnErr(err)
 	}
 	raftConfig := c.Spec.Raft
 
 	if err := m.watchForKEKChanges(ctx); err != nil {
+		log.G(ctx).Infof("MANAGER-DEBUGGING: watch for kek changes errored: %v", err)
 		return returnErr(err)
 	}
 
@@ -432,6 +436,7 @@ func (m *Manager) Run(parent context.Context) error {
 
 	// wait for an error in serving.
 	err = <-errServe
+	log.G(ctx).Infof("MANAGER-DEBUGGING: error serving (manager stopping) because: %v", err)
 	m.mu.Lock()
 	if m.stopped {
 		m.mu.Unlock()

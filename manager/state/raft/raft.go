@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"encoding/base64"
 	"fmt"
 	"math"
 	"math/rand"
@@ -382,6 +383,7 @@ func (n *Node) Run(ctx context.Context) error {
 		if nodeRemoved {
 			// Move WAL and snapshot out of the way, since
 			// they are no longer usable.
+			log.G(ctx).Infof("DEK-DEBUGGING: node has been removed - removing KEKs and raft logs")
 			if err := n.raftLogger.Clear(ctx); err != nil {
 				log.G(ctx).WithError(err).Error("failed to move wal after node removal")
 			}
@@ -423,6 +425,8 @@ func (n *Node) Run(ctx context.Context) error {
 				if err := n.restoreFromSnapshot(rd.Snapshot.Data, false); err != nil {
 					log.G(ctx).WithError(err).Error("failed to restore from snapshot")
 				}
+				log.G(ctx).Infof("DEK-DEBUGGING: received and restored snapshot from ready, index %d, term %d",
+					rd.Snapshot.Metadata.Index, rd.Snapshot.Metadata.Term)
 				n.appliedIndex = rd.Snapshot.Metadata.Index
 				n.snapshotMeta = rd.Snapshot.Metadata
 				n.confState = rd.Snapshot.Metadata.ConfState
@@ -466,7 +470,12 @@ func (n *Node) Run(ctx context.Context) error {
 			// Process committed entries
 			for _, entry := range rd.CommittedEntries {
 				if err := n.processCommitted(ctx, entry); err != nil {
+					logrus.Infof("DEK-DEBUGGING: failed to commit entry index %d term %d; currently at applied index %d",
+						entry.Index, entry.Term, n.appliedIndex)
 					log.G(ctx).WithError(err).Error("failed to process committed entries")
+				} else {
+					logrus.Infof("DEK-DEBUGGING: successfully commited entry index %d term %d; currently at applied index %d",
+						entry.Index, entry.Term, n.appliedIndex)
 				}
 			}
 
@@ -477,6 +486,7 @@ func (n *Node) Run(ctx context.Context) error {
 			if n.snapshotInProgress == nil &&
 				(n.needsSnapshot(ctx) || raftConfig.SnapshotInterval > 0 &&
 					n.appliedIndex-n.snapshotMeta.Index >= raftConfig.SnapshotInterval) {
+				logrus.Infof("DEK-DEBUGGING: calling doSnapshot after receiving raft entry")
 				n.doSnapshot(ctx, raftConfig)
 			}
 
@@ -518,6 +528,7 @@ func (n *Node) Run(ctx context.Context) error {
 			n.snapshotInProgress = nil
 			n.maybeMarkRotationFinished(ctx)
 			if n.rotationQueued && n.needsSnapshot(ctx) {
+				logrus.Infof("DEK-DEBUGGING: doing another snapshot because rotation was queued")
 				// there was a key rotation that took place before while the snapshot
 				// was in progress - we have to take another snapshot and encrypt with the new key
 				n.rotationQueued = false
@@ -534,6 +545,7 @@ func (n *Node) Run(ctx context.Context) error {
 			case n.snapshotInProgress != nil:
 				n.rotationQueued = true
 			case n.needsSnapshot(ctx):
+				logrus.Infof("DEK-DEBUGGING: Got rotation notification for key and doing snapshot")
 				n.doSnapshot(ctx, n.getCurrentRaftConfig())
 			}
 		case <-n.removeRaftCh:
@@ -578,6 +590,8 @@ func (n *Node) needsSnapshot(ctx context.Context) bool {
 
 func (n *Node) maybeMarkRotationFinished(ctx context.Context) {
 	if n.waitForAppliedIndex > 0 && n.waitForAppliedIndex <= n.snapshotMeta.Index {
+		logrus.Infof("DEK-DEBUGGING: finishing key rotation to %s",
+			base64.RawStdEncoding.EncodeToString(n.raftLogger.EncryptionKey))
 		// this means we tried to rotate - so finish the rotation
 		if err := n.keyRotator.UpdateKeys(EncryptionKeys{CurrentDEK: n.raftLogger.EncryptionKey}); err != nil {
 			log.G(ctx).WithError(err).Error("failed to update encryption keys after a successful rotation")

@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 
+	"github.com/Sirupsen/logrus"
 	"github.com/docker/swarmkit/ca"
 	"github.com/docker/swarmkit/manager/encryption"
 	"github.com/docker/swarmkit/manager/state/raft"
@@ -22,6 +23,13 @@ const (
 type RaftDEKData struct {
 	raft.EncryptionKeys
 	NeedsRotation bool
+}
+
+func (r RaftDEKData) String() string {
+	return fmt.Sprintf("CurrentDEK: %s\nPendingDEK: %s\nNeedsRotation: %v",
+		base64.RawStdEncoding.EncodeToString(r.CurrentDEK),
+		base64.RawStdEncoding.EncodeToString(r.PendingDEK),
+		r.NeedsRotation)
 }
 
 // UnmarshalHeaders loads the state of the DEK manager given the current TLS headers
@@ -173,7 +181,9 @@ func (r *RaftDEKManager) GetKeys() raft.EncryptionKeys {
 			CurrentDEK: data.CurrentDEK,
 			PendingDEK: encryption.GenerateSecretKey(),
 		}
-		return RaftDEKData{EncryptionKeys: newKeys}, nil
+		newData := RaftDEKData{EncryptionKeys: newKeys}
+		logrus.Infof("DEK-DEBUGGING: GetKeys: updating headers from\n%s\nto\n%s", data.String(), newData.String())
+		return newData, nil
 	})
 	if err != nil {
 		return originalKeys
@@ -197,12 +207,15 @@ func (r *RaftDEKManager) UpdateKeys(newKeys raft.EncryptionKeys) error {
 		}
 		// If there is no current DEK, we are basically wiping out all DEKs (no header object)
 		if newKeys.CurrentDEK == nil {
+			logrus.Infof("DEK-DEBUGGING: UpdateKeys: removing headers\n%s\n", data.String())
 			return nil, nil
 		}
-		return RaftDEKData{
+		newData := RaftDEKData{
 			EncryptionKeys: newKeys,
 			NeedsRotation:  data.NeedsRotation,
-		}, nil
+		}
+		logrus.Infof("DEK-DEBUGGING: UpdateKeys: updating headers from\n%s\nto\n%s", data.String(), newData.String())
+		return newData, nil
 	})
 }
 
@@ -224,10 +237,11 @@ func (r *RaftDEKManager) MaybeUpdateKEK(candidateKEK ca.KEKData) (bool, bool, er
 		if !ok {
 			return ca.KEKData{}, nil, errNotUsingRaftDEKData
 		}
-
+		origData := data
 		if unlockedToLocked {
 			data.NeedsRotation = true
 		}
+		logrus.Infof("DEK-DEBUGGING: MaybeUpdateKEK: updating headers from\n%s\nto\n%s", origData.String(), data.String())
 		return candidateKEK, data, nil
 	})
 	if err == errNoUpdateNeeded {
