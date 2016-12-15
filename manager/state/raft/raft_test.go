@@ -2,6 +2,7 @@ package raft_test
 
 import (
 	"fmt"
+	"log"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -11,9 +12,11 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/grpclog"
 
 	"golang.org/x/net/context"
 
+	"github.com/Sirupsen/logrus"
 	"github.com/coreos/etcd/pkg/fileutil"
 	"github.com/coreos/etcd/wal"
 	"github.com/docker/swarmkit/api"
@@ -36,8 +39,9 @@ var tc *cautils.TestCA
 func TestMain(m *testing.M) {
 	tc = cautils.NewTestCA(nil)
 
-	// grpclog.SetLogger(log.New(ioutil.Discard, "", log.LstdFlags))
-	// logrus.SetOutput(ioutil.Discard)
+	grpclog.SetLogger(log.New(os.Stdout, "", log.LstdFlags))
+	logrus.SetOutput(os.Stdout)
+	logrus.SetLevel(logrus.DebugLevel)
 
 	// Set a smaller segment size so we don't incur cost preallocating
 	// space on old filesystems like HFS+.
