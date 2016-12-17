@@ -26,7 +26,7 @@ func (n *Node) readFromDisk(ctx context.Context) (*raftpb.Snapshot, storage.WALD
 		n.raftLogger.EncryptionKey = keys.PendingDEK
 	}
 
-	snap, walData, err := n.raftLogger.BootstrapFromDisk(ctx)
+	snap, walData, err := n.raftLogger.BootstrapFromDisk(ctx, true)
 
 	if keys.PendingDEK != nil {
 		switch errors.Cause(err).(type) {
@@ -35,7 +35,7 @@ func (n *Node) readFromDisk(ctx context.Context) (*raftpb.Snapshot, storage.WALD
 				err = errors.Wrap(err, "previous key rotation was successful, but unable mark rotation as complete")
 			}
 		case encryption.ErrCannotDecrypt:
-			snap, walData, err = n.raftLogger.BootstrapFromDisk(ctx, keys.CurrentDEK)
+			snap, walData, err = n.raftLogger.BootstrapFromDisk(ctx, true, keys.CurrentDEK)
 		}
 	}
 

@@ -60,8 +60,9 @@ type EncryptedRaftLogger struct {
 	snapshotter Snapshotter
 }
 
-// BootstrapFromDisk creates a new snapshotter and wal, and also reads the latest snapshot and WALs from disk
-func (e *EncryptedRaftLogger) BootstrapFromDisk(ctx context.Context, oldEncryptionKeys ...[]byte) (*raftpb.Snapshot, WALData, error) {
+// BootstrapFromDisk creates a new snapshotter and WAL, and also reads the latest snapshot and WALs from disk.
+// If migrate is set to True, if any older snapshot or WAL directories exist
+func (e *EncryptedRaftLogger) BootstrapFromDisk(ctx context.Context, migrate bool, oldEncryptionKeys ...[]byte) (*raftpb.Snapshot, WALData, error) {
 	e.encoderMu.Lock()
 	defer e.encoderMu.Unlock()
 
@@ -80,7 +81,7 @@ func (e *EncryptedRaftLogger) BootstrapFromDisk(ctx context.Context, oldEncrypti
 
 	snapFactory := NewSnapFactory(encrypter, decrypter)
 
-	if !fileutil.Exist(snapDir) {
+	if !fileutil.Exist(snapDir) && migrate {
 		// If snapshots created by the etcd-v2 code exist, or by swarmkit development version,
 		// read the latest snapshot and write it encoded to the new path.  The new path
 		// prevents etc-v2 creating snapshots that are visible to us, but not encoded and
@@ -125,16 +126,18 @@ func (e *EncryptedRaftLogger) BootstrapFromDisk(ctx context.Context, oldEncrypti
 		// If wals created by the etcd-v2 wal code exist, read the latest ones based
 		// on this snapshot and encode them to wals in the new path to avoid adding
 		// backwards-incompatible entries to those files.
-		for _, dirs := range versionedWALSnapDirs[1:] {
-			legacyWALDir := filepath.Join(e.StateDir, dirs.wal)
-			if !wal.Exist(legacyWALDir) {
-				continue
+		if migrate {
+			for _, dirs := range versionedWALSnapDirs[1:] {
+				legacyWALDir := filepath.Join(e.StateDir, dirs.wal)
+				if !wal.Exist(legacyWALDir) {
+					continue
+				}
+				if err = MigrateWALs(ctx, legacyWALDir, walDir, OriginalWAL, walFactory, walsnap); err != nil {
+					return nil, WALData{}, err
+				}
+				walExists = true
+				break
 			}
-			if err = MigrateWALs(ctx, legacyWALDir, walDir, OriginalWAL, walFactory, walsnap); err != nil {
-				return nil, WALData{}, err
-			}
-			walExists = true
-			break
 		}
 		if !walExists {
 			return nil, WALData{}, ErrNoWAL

@@ -8,11 +8,36 @@ import (
 	"testing"
 
 	"github.com/coreos/etcd/raft/raftpb"
+	"github.com/coreos/etcd/wal"
 	"github.com/coreos/etcd/wal/walpb"
 	"github.com/docker/swarmkit/manager/encryption"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/require"
 )
+
+// writeFakeRaftData writes the given snapshot and some generated WAL data to given "snap" and "wal" directories
+// using the given SnapFactory and WALFactory
+func writeFakeRaftData(t *testing.T, raftDir, suffix string, snapshot raftpb.Snapshot, wf WALFactory, sf SnapFactory) []raftpb.Entry {
+	snapDir := filepath.Join(raftDir, "snap"+suffix)
+	walDir := filepath.Join(raftDir, "wal"+suffix)
+	require.NoError(t, os.MkdirAll(snapDir, 0755))
+	require.NoError(t, sf.New(snapDir).SaveSnap(snapshot))
+
+	_, entries, _ := makeWALData(snapshot.Metadata.Index, snapshot.Metadata.Term)
+	walWriter, err := wf.Create(walDir, []byte("metadata"))
+	require.NoError(t, err)
+	require.NoError(t, walWriter.SaveSnapshot(walpb.Snapshot{Index: snapshot.Metadata.Index, Term: snapshot.Metadata.Term}))
+	require.NoError(t, walWriter.Save(raftpb.HardState{}, entries))
+	require.NoError(t, walWriter.Close())
+	return entries
+}
+
+func TestMain(m *testing.M) {
+	// Set a smaller segment size so we don't incur cost preallocating
+	// space on old filesystems like HFS+.
+	wal.SegmentSizeBytes = 64 * 1024
+	os.Exit(m.Run())
+}
 
 func TestBootstrapFromDisk(t *testing.T) {
 	tempdir, err := ioutil.TempDir("", "raft-storage")
@@ -37,7 +62,7 @@ func TestBootstrapFromDisk(t *testing.T) {
 		StateDir:      tempdir,
 		EncryptionKey: []byte("key1"),
 	}
-	readSnap, waldata, err := logger.BootstrapFromDisk(context.Background())
+	readSnap, waldata, err := logger.BootstrapFromDisk(context.Background(), true)
 	require.NoError(t, err)
 	require.Nil(t, readSnap)
 	require.Equal(t, entries, waldata.Entries)
@@ -56,7 +81,7 @@ func TestBootstrapFromDisk(t *testing.T) {
 		StateDir:      tempdir,
 		EncryptionKey: []byte("key1"),
 	}
-	readSnap, waldata, err = logger.BootstrapFromDisk(context.Background())
+	readSnap, waldata, err = logger.BootstrapFromDisk(context.Background(), true)
 	require.NoError(t, err)
 	require.NotNil(t, snapshot)
 	require.Equal(t, snapshot, *readSnap)
@@ -77,7 +102,7 @@ func TestBootstrapFromDisk(t *testing.T) {
 			StateDir:      tempdir,
 			EncryptionKey: []byte(key),
 		}
-		_, _, err := logger.BootstrapFromDisk(context.Background())
+		_, _, err := logger.BootstrapFromDisk(context.Background(), true)
 		require.IsType(t, encryption.ErrCannotDecrypt{}, errors.Cause(err))
 	}
 
@@ -86,7 +111,7 @@ func TestBootstrapFromDisk(t *testing.T) {
 		StateDir:      tempdir,
 		EncryptionKey: []byte("key2"),
 	}
-	readSnap, waldata, err = logger.BootstrapFromDisk(context.Background(), []byte("key1"))
+	readSnap, waldata, err = logger.BootstrapFromDisk(context.Background(), true, []byte("key1"))
 	require.NoError(t, err)
 	require.NotNil(t, snapshot)
 	require.Equal(t, snapshot, *readSnap)
@@ -139,6 +164,7 @@ func TestRaftLoggerRace(t *testing.T) {
 	require.NoError(t, err, "unable to save snapshot a second time")
 }
 
+// BootstrapFromDisk migrates old WAL and snapshots correctly if the migration boolean is set
 func TestMigrateToV3EncryptedForm(t *testing.T) {
 	t.Parallel()
 
@@ -148,27 +174,12 @@ func TestMigrateToV3EncryptedForm(t *testing.T) {
 
 	dek := []byte("key")
 
-	writeDataTo := func(suffix string, snapshot raftpb.Snapshot, walFactory WALFactory, snapFactory SnapFactory) []raftpb.Entry {
-		snapDir := filepath.Join(tempdir, "snap"+suffix)
-		walDir := filepath.Join(tempdir, "wal"+suffix)
-		require.NoError(t, os.MkdirAll(snapDir, 0755))
-		require.NoError(t, snapFactory.New(snapDir).SaveSnap(snapshot))
-
-		_, entries, _ := makeWALData(snapshot.Metadata.Index, snapshot.Metadata.Term)
-		walWriter, err := walFactory.Create(walDir, []byte("metadata"))
-		require.NoError(t, err)
-		require.NoError(t, walWriter.SaveSnapshot(walpb.Snapshot{Index: snapshot.Metadata.Index, Term: snapshot.Metadata.Term}))
-		require.NoError(t, walWriter.Save(raftpb.HardState{}, entries))
-		require.NoError(t, walWriter.Close())
-		return entries
-	}
-
 	requireLoadedData := func(expectedSnap raftpb.Snapshot, expectedEntries []raftpb.Entry) {
 		logger := EncryptedRaftLogger{
 			StateDir:      tempdir,
 			EncryptionKey: dek,
 		}
-		readSnap, waldata, err := logger.BootstrapFromDisk(context.Background())
+		readSnap, waldata, err := logger.BootstrapFromDisk(context.Background(), true)
 		require.NoError(t, err)
 		require.NotNil(t, readSnap)
 		require.Equal(t, expectedSnap, *readSnap)
@@ -189,9 +200,9 @@ func TestMigrateToV3EncryptedForm(t *testing.T) {
 	snapFactory := NewSnapFactory(encoder, decoders)
 
 	// generate both v2 and v3 unencrypted snapshot data directories, as well as an encrypted directory
-	v2Entries := writeDataTo("", v2Snapshot, OriginalWAL, OriginalSnap)
-	v3Entries := writeDataTo("-v3", v3Snapshot, OriginalWAL, OriginalSnap)
-	v3EncryptedEntries := writeDataTo("-v3-encrypted", v3EncryptedSnapshot, walFactory, snapFactory)
+	v2Entries := writeFakeRaftData(t, tempdir, "", v2Snapshot, OriginalWAL, OriginalSnap)
+	v3Entries := writeFakeRaftData(t, tempdir, "-v3", v3Snapshot, OriginalWAL, OriginalSnap)
+	v3EncryptedEntries := writeFakeRaftData(t, tempdir, "-v3-encrypted", v3EncryptedSnapshot, walFactory, snapFactory)
 
 	// bootstrap from disk - the encrypted directory exists, so we should just read from
 	// it instead of from the legacy directories
@@ -201,6 +212,7 @@ func TestMigrateToV3EncryptedForm(t *testing.T) {
 	require.NoError(t, os.RemoveAll(filepath.Join(tempdir, "snap-v3-encrypted")))
 	require.NoError(t, os.RemoveAll(filepath.Join(tempdir, "wal-v3-encrypted")))
 	requireLoadedData(v3Snapshot, v3Entries)
+
 	// it can recover from partial migrations
 	require.NoError(t, os.RemoveAll(filepath.Join(tempdir, "snap-v3-encrypted")))
 	requireLoadedData(v3Snapshot, v3Entries)
@@ -216,4 +228,22 @@ func TestMigrateToV3EncryptedForm(t *testing.T) {
 	require.NoError(t, os.RemoveAll(filepath.Join(tempdir, "snap-v3")))
 	require.NoError(t, os.RemoveAll(filepath.Join(tempdir, "wal-v3")))
 	requireLoadedData(v2Snapshot, v2Entries)
+}
+
+// BootstrapFromDisk should respect the migration boolean and not migrate if the
+// boolean is unset, even if there is old data
+func TestBootstrapFromDiskWithoutMigration(t *testing.T) {
+	t.Parallel()
+
+	tempdir, err := ioutil.TempDir("", "raft-storage")
+	require.NoError(t, err)
+	defer os.RemoveAll(tempdir)
+
+	writeFakeRaftData(t, tempdir, "", fakeSnapshotData, OriginalWAL, OriginalSnap)
+
+	_, _, err = (&EncryptedRaftLogger{
+		StateDir:      tempdir,
+		EncryptionKey: []byte("key"),
+	}).BootstrapFromDisk(context.Background(), false)
+	require.Equal(t, ErrNoWAL, err)
 }
