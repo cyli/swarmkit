@@ -64,7 +64,7 @@ vet: binaries ## run go vet
 
 fmt: ## run go fmt
 	@echo "🐳 $@"
-	@test -z "$$(gofmt -s -l . | grep -v vendor/ | grep -v ".pb.go$$" | tee /dev/stderr)" || \
+	@test -z "$$(gofmt -s -l . | grep -v vendor/ | grep -v v2etcd | grep -v ".pb.go$$" | tee /dev/stderr)" || \
 		(echo "👹 please format Go code with 'gofmt -s -w'" && false)
 	@test -z "$$(find . -path ./vendor -prune -o ! -name timestamp.proto ! -name duration.proto -name '*.proto' -type f -exec grep -Hn -e "^ " {} \; | tee /dev/stderr)" || \
 		(echo "👹 please indent proto files with tabs only" && false)
@@ -75,11 +75,11 @@ fmt: ## run go fmt
 
 lint: ## run go lint
 	@echo "🐳 $@"
-	@test -z "$$(golint ./... | grep -v vendor/ | grep -v ".pb.go:" | grep -v ".mock.go" | tee /dev/stderr)"
+	@test -z "$$(golint ./... | grep -v vendor/ | grep -v v2etcd | grep -v ".pb.go:" | grep -v ".mock.go" | tee /dev/stderr)"
 
 ineffassign: ## run ineffassign
 	@echo "🐳 $@"
-	@test -z "$$(ineffassign . | grep -v vendor/ | grep -v ".pb.go:" | grep -v ".mock.go" | tee /dev/stderr)"
+	@test -z "$$(ineffassign . | grep -v vendor/ | grep -v v2etcd | grep -v ".pb.go:" | grep -v ".mock.go" | tee /dev/stderr)"
 
 #errcheck: ## run go errcheck
 #	@echo "🐳 $@"
