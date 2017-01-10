@@ -14,25 +14,12 @@
 
 package wal
 
-import "github.com/docker/swarmkit/cmd/swarm-rafttool/v2etcd/Godeps/_workspace/src/github.com/prometheus/client_golang/prometheus"
+type stubbedPrometheus struct{}
+
+func (t stubbedPrometheus) Observe(float64) {}
+func (t stubbedPrometheus) Set(float64)     {}
 
 var (
-	syncDurations = prometheus.NewHistogram(prometheus.HistogramOpts{
-		Namespace: "etcd",
-		Subsystem: "wal",
-		Name:      "fsync_durations_seconds",
-		Help:      "The latency distributions of fsync called by wal.",
-		Buckets:   prometheus.ExponentialBuckets(0.001, 2, 14),
-	})
-	lastIndexSaved = prometheus.NewGauge(prometheus.GaugeOpts{
-		Namespace: "etcd",
-		Subsystem: "wal",
-		Name:      "last_index_saved",
-		Help:      "The index of the last entry saved by wal.",
-	})
+	syncDurations  = stubbedPrometheus{}
+	lastIndexSaved = syncDurations
 )
-
-func init() {
-	prometheus.MustRegister(syncDurations)
-	prometheus.MustRegister(lastIndexSaved)
-}

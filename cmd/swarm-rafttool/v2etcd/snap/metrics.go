@@ -14,28 +14,11 @@
 
 package snap
 
-import "github.com/docker/swarmkit/cmd/swarm-rafttool/v2etcd/Godeps/_workspace/src/github.com/prometheus/client_golang/prometheus"
+type stubbedPrometheus struct{}
+
+func (t stubbedPrometheus) Observe(float64) {}
 
 var (
-	// TODO: save_fsync latency?
-	saveDurations = prometheus.NewHistogram(prometheus.HistogramOpts{
-		Namespace: "etcd",
-		Subsystem: "snapshot",
-		Name:      "save_total_durations_seconds",
-		Help:      "The total latency distributions of save called by snapshot.",
-		Buckets:   prometheus.ExponentialBuckets(0.001, 2, 14),
-	})
-
-	marshallingDurations = prometheus.NewHistogram(prometheus.HistogramOpts{
-		Namespace: "etcd",
-		Subsystem: "snapshot",
-		Name:      "save_marshalling_durations_seconds",
-		Help:      "The marshalling cost distributions of save called by snapshot.",
-		Buckets:   prometheus.ExponentialBuckets(0.001, 2, 14),
-	})
+	saveDurations        = stubbedPrometheus{}
+	marshallingDurations = saveDurations
 )
-
-func init() {
-	prometheus.MustRegister(saveDurations)
-	prometheus.MustRegister(marshallingDurations)
-}
