@@ -21,7 +21,7 @@ import (
 	"path"
 	"sort"
 
-	"github.com/docker/swarmkit/cmd/swarm-rafttool/v2etcd/Godeps/_workspace/src/github.com/coreos/pkg/capnslog"
+	"github.com/coreos/pkg/capnslog"
 )
 
 const (

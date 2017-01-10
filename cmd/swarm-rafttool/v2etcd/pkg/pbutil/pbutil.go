@@ -15,7 +15,7 @@
 // Package pbutil defines interfaces for handling Protocol Buffer objects.
 package pbutil
 
-import "github.com/docker/swarmkit/cmd/swarm-rafttool/v2etcd/Godeps/_workspace/src/github.com/coreos/pkg/capnslog"
+import "github.com/coreos/pkg/capnslog"
 
 var (
 	plog = capnslog.NewPackageLogger("github.com/docker/swarmkit/cmd/swarm-rafttool/v2etcd/pkg", "flags")

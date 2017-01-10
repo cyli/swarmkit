@@ -17,8 +17,8 @@ package raft
 import (
 	"errors"
 
-	"github.com/docker/swarmkit/cmd/swarm-rafttool/v2etcd/Godeps/_workspace/src/golang.org/x/net/context"
 	pb "github.com/docker/swarmkit/cmd/swarm-rafttool/v2etcd/raft/raftpb"
+	"golang.org/x/net/context"
 )
 
 type SnapshotStatus int
