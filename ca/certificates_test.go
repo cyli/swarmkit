@@ -60,14 +60,17 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-func TestCreateRootCA(t *testing.T) {
+func TestCreateRootCASaveRootCA(t *testing.T) {
 	tempBaseDir, err := ioutil.TempDir("", "swarm-ca-test-")
 	assert.NoError(t, err)
 	defer os.RemoveAll(tempBaseDir)
 
 	paths := ca.NewConfigPaths(tempBaseDir)
 
-	_, err = ca.CreateRootCA("rootCN", paths.RootCA)
+	rootCA, err := ca.CreateRootCA("rootCN")
+	assert.NoError(t, err)
+
+	err = ca.SaveRootCA(rootCA, paths.RootCA)
 	assert.NoError(t, err)
 
 	perms, err := permbits.Stat(paths.RootCA.Cert)
@@ -80,13 +83,7 @@ func TestCreateRootCA(t *testing.T) {
 }
 
 func TestCreateRootCAExpiry(t *testing.T) {
-	tempBaseDir, err := ioutil.TempDir("", "swarm-ca-test-")
-	assert.NoError(t, err)
-	defer os.RemoveAll(tempBaseDir)
-
-	paths := ca.NewConfigPaths(tempBaseDir)
-
-	rootCA, err := ca.CreateRootCA("rootCN", paths.RootCA)
+	rootCA, err := ca.CreateRootCA("rootCN")
 	assert.NoError(t, err)
 
 	// Convert the certificate into an object to create a RootCA
@@ -95,7 +92,6 @@ func TestCreateRootCAExpiry(t *testing.T) {
 	duration, err := time.ParseDuration(ca.RootCAExpiration)
 	assert.NoError(t, err)
 	assert.True(t, time.Now().Add(duration).AddDate(0, -1, 0).Before(parsedCert.NotAfter))
-
 }
 
 func TestGetLocalRootCA(t *testing.T) {
@@ -110,8 +106,10 @@ func TestGetLocalRootCA(t *testing.T) {
 	assert.Equal(t, ca.ErrNoLocalRootCA, err)
 
 	// Create the local Root CA to ensure that we can reload it correctly.
-	rootCA, err := ca.CreateRootCA("rootCN", paths.RootCA)
+	rootCA, err := ca.CreateRootCA("rootCN")
 	assert.True(t, rootCA.CanSign())
+	assert.NoError(t, err)
+	err = ca.SaveRootCA(rootCA, paths.RootCA)
 	assert.NoError(t, err)
 
 	// No private key here
@@ -165,8 +163,9 @@ func TestGetLocalRootCAInvalidKey(t *testing.T) {
 
 	paths := ca.NewConfigPaths(tempBaseDir)
 	// Create the local Root CA to ensure that we can reload it correctly.
-	_, err = ca.CreateRootCA("rootCN", paths.RootCA)
+	rootCA, err := ca.CreateRootCA("rootCN")
 	require.NoError(t, err)
+	require.NoError(t, ca.SaveRootCA(rootCA, paths.RootCA))
 
 	// Write some garbage to the root key - this will cause the loading to fail
 	require.NoError(t, ioutil.WriteFile(paths.RootCA.Key, []byte(`-----BEGIN EC PRIVATE KEY-----\n
@@ -194,13 +193,7 @@ func TestEncryptECPrivateKey(t *testing.T) {
 }
 
 func TestParseValidateAndSignCSR(t *testing.T) {
-	tempBaseDir, err := ioutil.TempDir("", "swarm-ca-test-")
-	assert.NoError(t, err)
-	defer os.RemoveAll(tempBaseDir)
-
-	paths := ca.NewConfigPaths(tempBaseDir)
-
-	rootCA, err := ca.CreateRootCA("rootCN", paths.RootCA)
+	rootCA, err := ca.CreateRootCA("rootCN")
 	assert.NoError(t, err)
 
 	csr, _, err := ca.GenerateNewCSR()
@@ -214,13 +207,7 @@ func TestParseValidateAndSignCSR(t *testing.T) {
 }
 
 func TestParseValidateAndSignMaliciousCSR(t *testing.T) {
-	tempBaseDir, err := ioutil.TempDir("", "swarm-ca-test-")
-	assert.NoError(t, err)
-	defer os.RemoveAll(tempBaseDir)
-
-	paths := ca.NewConfigPaths(tempBaseDir)
-
-	rootCA, err := ca.CreateRootCA("rootCN", paths.RootCA)
+	rootCA, err := ca.CreateRootCA("rootCN")
 	assert.NoError(t, err)
 
 	req := &cfcsr.CertificateRequest{
@@ -268,8 +255,7 @@ func TestGetRemoteCA(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpDir)
 	paths := ca.NewConfigPaths(tmpDir)
-
-	otherRootCA, err := ca.CreateRootCA("other", paths.RootCA)
+	otherRootCA, err := ca.CreateRootCA("other")
 	require.NoError(t, err)
 
 	comboCertBundle := append(tc.RootCA.Cert, otherRootCA.Cert...)
@@ -555,18 +541,15 @@ func TestNewRootCABundle(t *testing.T) {
 	paths := ca.NewConfigPaths(tempBaseDir)
 
 	// make one rootCA
-	secondRootCA, err := ca.CreateRootCA("rootCN2", paths.RootCA)
+	firstRootCA, err := ca.CreateRootCA("rootCN1")
 	assert.NoError(t, err)
 
 	// make a second root CA
-	firstRootCA, err := ca.CreateRootCA("rootCN1", paths.RootCA)
+	secondRootCA, err := ca.CreateRootCA("rootCN2")
 	assert.NoError(t, err)
 
-	// Overwrite the bytes of the second Root CA with the bundle, creating a valid 2 cert bundle
+	// Create a valid 2 cert bundle containing the first and second cert
 	bundle := append(firstRootCA.Cert, secondRootCA.Cert...)
-	err = ioutil.WriteFile(paths.RootCA.Cert, bundle, 0644)
-	assert.NoError(t, err)
-
 	newRootCA, err := ca.NewRootCA(bundle, firstRootCA.Key, ca.DefaultNodeCertExpiration)
 	assert.NoError(t, err)
 	assert.Equal(t, bundle, newRootCA.Cert)
@@ -583,13 +566,7 @@ func TestNewRootCABundle(t *testing.T) {
 }
 
 func TestNewRootCANonDefaultExpiry(t *testing.T) {
-	tempBaseDir, err := ioutil.TempDir("", "swarm-ca-test-")
-	assert.NoError(t, err)
-	defer os.RemoveAll(tempBaseDir)
-
-	paths := ca.NewConfigPaths(tempBaseDir)
-
-	rootCA, err := ca.CreateRootCA("rootCN", paths.RootCA)
+	rootCA, err := ca.CreateRootCA("rootCN")
 	assert.NoError(t, err)
 
 	newRootCA, err := ca.NewRootCA(rootCA.Cert, rootCA.Key, 1*time.Hour)
@@ -690,15 +667,10 @@ func TestNewRootCAInvalidCertAndKeys(t *testing.T) {
 }
 
 func TestNewRootCAWithPassphrase(t *testing.T) {
-	tempBaseDir, err := ioutil.TempDir("", "swarm-ca-test-")
-	assert.NoError(t, err)
-	defer os.RemoveAll(tempBaseDir)
 	defer os.Setenv(ca.PassphraseENVVar, "")
 	defer os.Setenv(ca.PassphraseENVVarPrev, "")
 
-	paths := ca.NewConfigPaths(tempBaseDir)
-
-	rootCA, err := ca.CreateRootCA("rootCN", paths.RootCA)
+	rootCA, err := ca.CreateRootCA("rootCN")
 	assert.NoError(t, err)
 
 	// Ensure that we're encrypting the Key bytes out of NewRoot if there
@@ -739,5 +711,4 @@ func TestNewRootCAWithPassphrase(t *testing.T) {
 	assert.Equal(t, newRootCA, anotherNewRootCA)
 	assert.NotContains(t, string(rootCA.Key), string(anotherNewRootCA.Key))
 	assert.Contains(t, string(anotherNewRootCA.Key), "Proc-Type: 4,ENCRYPTED")
-
 }

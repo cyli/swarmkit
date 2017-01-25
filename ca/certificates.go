@@ -527,7 +527,7 @@ func GetRemoteCA(ctx context.Context, d digest.Digest, connBroker *connectionbro
 
 // CreateRootCA creates a Certificate authority for a new Swarm Cluster, potentially
 // overwriting any existing CAs.
-func CreateRootCA(rootCN string, paths CertPaths) (RootCA, error) {
+func CreateRootCA(rootCN string) (RootCA, error) {
 	// Create a simple CSR for the CA using the default CA validator and policy
 	req := cfcsr.CertificateRequest{
 		CN:         rootCN,
@@ -543,11 +543,6 @@ func CreateRootCA(rootCN string, paths CertPaths) (RootCA, error) {
 
 	rootCA, err := NewRootCA(cert, key, DefaultNodeCertExpiration)
 	if err != nil {
-		return RootCA{}, err
-	}
-
-	// save the cert to disk
-	if err := saveRootCA(rootCA, paths); err != nil {
 		return RootCA{}, err
 	}
 
@@ -654,7 +649,8 @@ func readCertValidity(kr KeyReader) (time.Time, time.Time, error) {
 
 }
 
-func saveRootCA(rootCA RootCA, paths CertPaths) error {
+// SaveRootCA saves a RootCA object to disk
+func SaveRootCA(rootCA RootCA, paths CertPaths) error {
 	// Make sure the necessary dirs exist and they are writable
 	err := os.MkdirAll(filepath.Dir(paths.Cert), 0755)
 	if err != nil {
