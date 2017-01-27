@@ -135,6 +135,8 @@
 		CreateSecretResponse
 		RemoveSecretRequest
 		RemoveSecretResponse
+		UpdateRootRotationRequest
+		UpdateRootRotationResponse
 		SessionRequest
 		SessionMessage
 		HeartbeatRequest

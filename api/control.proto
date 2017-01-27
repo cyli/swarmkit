@@ -116,7 +116,14 @@ service Control {
 	rpc RemoveSecret(RemoveSecretRequest) returns (RemoveSecretResponse) {
 		option (docker.protobuf.plugin.tls_authorization) = { roles: "swarm-manager" };
 	}
+
+	// --- root CA rotation APIs ---
+
+	rpc UpdateRootRotation(UpdateRootRotationRequest) returns (UpdateRootRotationResponse) {
+		option (docker.protobuf.plugin.tls_authorization) = { roles: "swarm-manager" };
+	}
 }
+
 
 message GetNodeRequest {
 	string node_id = 1;
@@ -339,6 +346,18 @@ message KeyRotation {
 	// ManagerUnlockKey tells UpdateCluster to rotate the manager unlock key
 	bool manager_unlock_key = 3;
 
+	// RootCARotation tells UpdateCluster whether the root CA cert and/or key should be updated
+	bool root_ca_rotation = 4 [(gogoproto.customname) = "RootCARotation"];
+
+	// RootCACert specifies, if provided, the root CA cert UpdateCluster should use when rotating
+	// If not provided, and a key is provided, the certificate will instead be generated.
+	bytes root_ca_cert = 5 [(gogoproto.customname) = "RootCACert"];
+
+	// RootCAKey specifies, if provided, the root CA key UpdateCluster should use when rotating.
+	// The key must match the CA cert, if the CA cert is provided.  It is possible to provided
+	// only the CA cert and not the key, if there are additional external CA urls provided
+	// that match the CA cert.
+	bytes root_ca_key = 6 [(gogoproto.customname) = "RootCAKey"];
 }
 
 message UpdateClusterRequest {
@@ -431,3 +450,16 @@ message RemoveSecretRequest {
 // RemoveSecretResponse is an empty object indicating the successful removal of
 // a secret.
 message RemoveSecretResponse {}
+
+// UpdateRootRotationRequest specifies which phase of the root rotation to transition into
+message UpdateRootRotationRequest {
+	// ClusterID is the cluster ID to update.
+	string cluster_id = 1 [(gogoproto.customname) = "ClusterID"];
+
+	// DesiredState is the desired root rotation state
+	RootRotationState.State DesiredState = 2;
+}
+
+// UpdateRootRotationResponse is an empty object indicating the successful transition of
+// the root rotation.
+message UpdateRootRotationResponse {}

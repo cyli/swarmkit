@@ -116,6 +116,10 @@ func (s *Server) UpdateCluster(ctx context.Context, request *api.UpdateClusterRe
 			cluster.RootCA.JoinTokens.Manager = ca.GenerateJoinToken(s.rootCA)
 		}
 
+		if err := validateAndMaybeStartRootRotation(cluster, request.Rotation); err != nil {
+			return err
+		}
+
 		var unlockKeys []*api.EncryptionKey
 		var managerKey *api.EncryptionKey
 		for _, eKey := range cluster.UnlockKeys {
