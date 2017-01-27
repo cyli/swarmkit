@@ -525,28 +525,49 @@ func GetRemoteCA(ctx context.Context, d digest.Digest, connBroker *connectionbro
 	return NewRootCA(response.Certificate, nil, DefaultNodeCertExpiration)
 }
 
-// CreateRootCA creates a Certificate authority for a new Swarm Cluster, potentially
-// overwriting any existing CAs.
-func CreateRootCA(rootCN string) (RootCA, error) {
+func rootCSR(rootCN string) *cfcsr.CertificateRequest {
 	// Create a simple CSR for the CA using the default CA validator and policy
-	req := cfcsr.CertificateRequest{
+	return &cfcsr.CertificateRequest{
 		CN:         rootCN,
 		KeyRequest: &cfcsr.BasicKeyRequest{A: RootKeyAlgo, S: RootKeySize},
 		CA:         &cfcsr.CAConfig{Expiry: RootCAExpiration},
 	}
+}
 
+// CreateRootCA creates a Certificate authority for a new Swarm Cluster, potentially
+// overwriting any existing CAs.
+func CreateRootCA(rootCN string) (RootCA, error) {
 	// Generate the CA and get the certificate and private key
-	cert, _, key, err := initca.New(&req)
+	cert, _, key, err := initca.New(rootCSR(rootCN))
+	if err != nil {
+		return RootCA{}, err
+	}
+	return NewRootCA(cert, key, DefaultNodeCertExpiration)
+}
+
+// CreateRootCAFromSigner creates a Certificate authority for a new Swarm Cluster given an existing key.  If a certificate
+// is provided, a new certificate with the same subject will be generated.
+func CreateRootCAFromSigner(rootCN string, key []byte, oldCert []byte) (RootCA, error) {
+	priv, err := helpers.ParsePrivateKeyPEM(key)
 	if err != nil {
 		return RootCA{}, err
 	}
 
-	rootCA, err := NewRootCA(cert, key, DefaultNodeCertExpiration)
+	var cert []byte
+	if oldCert != nil {
+		parsedCert, err := helpers.ParseCertificatePEM(oldCert)
+		if err != nil {
+			return RootCA{}, errors.Wrap(err, "cannot read previous certificate")
+		}
+		cert, err = initca.RenewFromSigner(parsedCert, priv)
+	} else {
+		cert, _, err = initca.NewFromSigner(rootCSR(rootCN), priv)
+	}
+
 	if err != nil {
 		return RootCA{}, err
 	}
-
-	return rootCA, nil
+	return NewRootCA(cert, key, DefaultNodeCertExpiration)
 }
 
 // GetRemoteSignedCertificate submits a CSR to a remote CA server address,

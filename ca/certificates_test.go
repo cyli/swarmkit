@@ -94,6 +94,28 @@ func TestCreateRootCAExpiry(t *testing.T) {
 	assert.True(t, time.Now().Add(duration).AddDate(0, -1, 0).Before(parsedCert.NotAfter))
 }
 
+func TestCreateRootCAFromSigner(t *testing.T) {
+	rootCA, err := ca.CreateRootCA("rootCN")
+	require.NoError(t, err)
+
+	// If a cert is passed, CreateRootCAFromSigner will try to use it as the template for the next RootCA
+	_, err = ca.CreateRootCAFromSigner("ignoreMe", rootCA.Key, []byte("unparseable"))
+	require.Error(t, err)
+
+	newRootCA, err := ca.CreateRootCAFromSigner("ignoreMe", rootCA.Key, rootCA.Cert)
+	require.NoError(t, err)
+
+	require.Equal(t, rootCA.Pool.Subjects(), newRootCA.Pool.Subjects())
+	require.NotEqual(t, rootCA.Cert, newRootCA.Cert)
+
+	// If no original cert is passed, CreateRootCAFromSigner will create a new certificate with the provided CN
+	newRootCA, err = ca.CreateRootCAFromSigner("notIgnored", rootCA.Key, nil)
+	require.NoError(t, err)
+
+	require.NotEqual(t, rootCA.Pool.Subjects(), newRootCA.Pool.Subjects())
+	require.NotEqual(t, rootCA.Cert, newRootCA.Cert)
+}
+
 func TestGetLocalRootCA(t *testing.T) {
 	tempBaseDir, err := ioutil.TempDir("", "swarm-ca-test-")
 	assert.NoError(t, err)
