@@ -635,6 +635,10 @@ message ExternalCA {
 	// Options is a set of additional key/value pairs whose interpretation
 	// depends on the specified CA type.
 	map<string, string> options = 3;
+
+	// CACertHash specifies the hash of the CA cert that this external CA URL corresponds
+	// to.  This is used help rotate root CAs from one external CA to another.
+	string ca_cert_hash = 4 [(gogoproto.customname) = "CACertHash"];
 }
 
 message CAConfig {
@@ -883,4 +887,21 @@ message MaybeEncryptedRecord {
 	Algorithm algorithm = 1;
 	bytes data = 2;
 	bytes nonce = 3;
+}
+
+
+
+message RootRotationState {
+	enum State {
+		NONE = 0 [(gogoproto.enumvalue_customname) = "RotationDone"];
+		CERTIFICATE_ROTATION = 1 [(gogoproto.enumvalue_customname) = "CertificateRotation"];
+		SIGNER_ROTATION = 2 [(gogoproto.enumvalue_customname) = "SignerRotation"];
+		ROTATION_ABORTED = 3 [(gogoproto.enumvalue_customname) = "RotationAborted"];
+	}
+
+	State state = 1;
+	bytes new_ca_cert = 2 [(gogoproto.customname) = "NewCACert"];
+	bytes new_ca_key = 3 [(gogoproto.customname) = "NewCAKey"];
+	bytes old_ca_cert = 4 [(gogoproto.customname) = "OldCACert"];
+	bytes old_ca_key = 5 [(gogoproto.customname) = "OldCAKey"];
 }
