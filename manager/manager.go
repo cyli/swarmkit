@@ -704,6 +704,64 @@ func (m *Manager) watchForKEKChanges(ctx context.Context) error {
 	return nil
 }
 
+// updateSecurityConfig is called when there are cluster changes, and it ensures that the local RootCA is
+// always aware of changes in clusterExpiry and the Root CA key material
+func (m *Manager) updateSecurityConfig(ctx context.Context, cluster *api.Cluster) error {
+	// If the cluster has a RootCA, let's try to update our SecurityConfig to reflect the latest values
+	rCA := cluster.RootCA
+	if len(rCA.CACert) != 0 && len(rCA.CAKey) != 0 {
+		expiry := DefaultNodeCertExpiration
+		if cluster.Spec.CAConfig.NodeCertExpiry != nil {
+			// NodeCertExpiry exists, let's try to parse the duration out of it
+			clusterExpiry, err := gogotypes.DurationFromProto(cluster.Spec.CAConfig.NodeCertExpiry)
+			if err != nil {
+				log.G(ctx).WithFields(logrus.Fields{
+					"cluster.id": cluster.ID,
+					"method":     "(*Server).updateCluster",
+				}).WithError(err).Warn("failed to parse certificate expiration, using default")
+			} else {
+				// We were able to successfully parse the expiration out of the cluster.
+				expiry = clusterExpiry
+			}
+		} else {
+			// NodeCertExpiry seems to be nil
+			log.G(ctx).WithFields(logrus.Fields{
+				"cluster.id": cluster.ID,
+				"method":     "(*Server).updateCluster",
+			}).WithError(err).Warn("failed to parse certificate expiration, using default")
+
+		}
+		// Attempt to update our local RootCA with the new parameters
+		err = s.securityConfig.UpdateRootCA(rCA.CACert, rCA.CAKey, expiry)
+		if err != nil {
+			log.G(ctx).WithFields(logrus.Fields{
+				"cluster.id": cluster.ID,
+				"method":     "(*Server).updateCluster",
+			}).WithError(err).Error("updating Root CA failed")
+		} else {
+			log.G(ctx).WithFields(logrus.Fields{
+				"cluster.id": cluster.ID,
+				"method":     "(*Server).updateCluster",
+			}).Debugf("Root CA updated successfully")
+		}
+	}
+
+	// Update our security config with the list of External CA URLs
+	// from the new cluster state.
+
+	// TODO(aaronl): In the future, this will be abstracted with an
+	// ExternalCA interface that has different implementations for
+	// different CA types. At the moment, only CFSSL is supported.
+	var cfsslURLs []string
+	for _, ca := range cluster.Spec.CAConfig.ExternalCAs {
+		if ca.Protocol == api.ExternalCA_CAProtocolCFSSL {
+			cfsslURLs = append(cfsslURLs, ca.URL)
+		}
+	}
+
+	s.securityConfig.externalCA.UpdateURLs(cfsslURLs...)
+}
+
 // rotateRootCAKEK will attempt to rotate the key-encryption-key for root CA key-material in raft.
 // If there is no passphrase set in ENV, it returns.
 // If there is plain-text root key-material, and a passphrase set, it encrypts it.

@@ -385,21 +385,11 @@ func (s *Server) Run(ctx context.Context) error {
 	updates, cancel, err := store.ViewAndWatch(
 		s.store,
 		func(readTx store.ReadTx) error {
-			clusters, err := store.FindClusters(readTx, store.ByName(store.DefaultClusterName))
-			if err != nil {
-				return err
-			}
-			if len(clusters) != 1 {
-				return errors.New("could not find cluster object")
-			}
-			s.updateCluster(ctx, clusters[0])
-
 			nodes, err = store.FindNodes(readTx, store.All)
 			return err
 		},
 		state.EventCreateNode{},
 		state.EventUpdateNode{},
-		state.EventUpdateCluster{},
 	)
 
 	// Do this after updateCluster has been called, so isRunning never
@@ -445,9 +435,6 @@ func (s *Server) Run(ctx context.Context) error {
 				if !isFinalState(v.Node.Certificate.Status) {
 					s.evaluateAndSignNodeCert(ctx, v.Node)
 				}
-			case state.EventUpdateCluster:
-				s.updateCluster(ctx, v.Cluster)
-			}
 		case <-ticker.C:
 			for _, node := range s.pending {
 				if err := s.evaluateAndSignNodeCert(ctx, node); err != nil {
@@ -510,69 +497,6 @@ func (s *Server) isRunning() bool {
 	default:
 	}
 	return true
-}
-
-// updateCluster is called when there are cluster changes, and it ensures that the local RootCA is
-// always aware of changes in clusterExpiry and the Root CA key material
-func (s *Server) updateCluster(ctx context.Context, cluster *api.Cluster) {
-	s.mu.Lock()
-	s.joinTokens = cluster.RootCA.JoinTokens.Copy()
-	s.mu.Unlock()
-	var err error
-
-	// If the cluster has a RootCA, let's try to update our SecurityConfig to reflect the latest values
-	rCA := cluster.RootCA
-	if len(rCA.CACert) != 0 && len(rCA.CAKey) != 0 {
-		expiry := DefaultNodeCertExpiration
-		if cluster.Spec.CAConfig.NodeCertExpiry != nil {
-			// NodeCertExpiry exists, let's try to parse the duration out of it
-			clusterExpiry, err := gogotypes.DurationFromProto(cluster.Spec.CAConfig.NodeCertExpiry)
-			if err != nil {
-				log.G(ctx).WithFields(logrus.Fields{
-					"cluster.id": cluster.ID,
-					"method":     "(*Server).updateCluster",
-				}).WithError(err).Warn("failed to parse certificate expiration, using default")
-			} else {
-				// We were able to successfully parse the expiration out of the cluster.
-				expiry = clusterExpiry
-			}
-		} else {
-			// NodeCertExpiry seems to be nil
-			log.G(ctx).WithFields(logrus.Fields{
-				"cluster.id": cluster.ID,
-				"method":     "(*Server).updateCluster",
-			}).WithError(err).Warn("failed to parse certificate expiration, using default")
-
-		}
-		// Attempt to update our local RootCA with the new parameters
-		err = s.securityConfig.UpdateRootCA(rCA.CACert, rCA.CAKey, expiry)
-		if err != nil {
-			log.G(ctx).WithFields(logrus.Fields{
-				"cluster.id": cluster.ID,
-				"method":     "(*Server).updateCluster",
-			}).WithError(err).Error("updating Root CA failed")
-		} else {
-			log.G(ctx).WithFields(logrus.Fields{
-				"cluster.id": cluster.ID,
-				"method":     "(*Server).updateCluster",
-			}).Debugf("Root CA updated successfully")
-		}
-	}
-
-	// Update our security config with the list of External CA URLs
-	// from the new cluster state.
-
-	// TODO(aaronl): In the future, this will be abstracted with an
-	// ExternalCA interface that has different implementations for
-	// different CA types. At the moment, only CFSSL is supported.
-	var cfsslURLs []string
-	for _, ca := range cluster.Spec.CAConfig.ExternalCAs {
-		if ca.Protocol == api.ExternalCA_CAProtocolCFSSL {
-			cfsslURLs = append(cfsslURLs, ca.URL)
-		}
-	}
-
-	s.securityConfig.externalCA.UpdateURLs(cfsslURLs...)
 }
 
 // evaluateAndSignNodeCert implements the logic of which certificates to sign
@@ -733,4 +657,10 @@ func isFinalState(status api.IssuanceStatus) bool {
 	}
 
 	return false
+}
+
+func (s *Server) UpdateJoinTokens(joinTokens *api.JoinTokens) {
+	s.mu.Lock()
+	s.joinTokens = joinTokens
+	s.mu.Unlock()
 }
