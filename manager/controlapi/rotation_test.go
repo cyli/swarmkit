@@ -2,6 +2,8 @@ package controlapi
 
 import (
 	"bytes"
+	"context"
+	"fmt"
 	"testing"
 
 	"google.golang.org/grpc"
@@ -12,6 +14,7 @@ import (
 	"github.com/docker/swarmkit/api"
 	"github.com/docker/swarmkit/ca"
 	"github.com/docker/swarmkit/ca/testutils"
+	"github.com/docker/swarmkit/manager/state/store"
 	digest "github.com/opencontainers/go-digest"
 	"github.com/stretchr/testify/require"
 )
@@ -373,5 +376,317 @@ func TestValidateAndStartRotationInvalidRotations(t *testing.T) {
 		require.Contains(t, grpc.ErrorDesc(err), testCase.expectErrorString)
 		require.Equal(t, testCase.expectRootCA, testCase.cluster.RootCA, "cluster should not have been altered")
 		require.Equal(t, testCase.expectRotationState, testCase.cluster.RootRotationState, "rotation state should not have been altered")
+	}
+}
+
+type updateRootRotationTestCase struct {
+	cluster             api.Cluster
+	desiredState        api.RootRotationState_State
+	expectRootCA        api.RootCA
+	expectRotationState *api.RootRotationState
+	expectErrorString   string
+	description         string
+}
+
+func TestUpdateRootRotationInvalid(t *testing.T) {
+	startRootCA := getRootCAObj(t, testutils.ECDSA256SHA256Cert, testutils.ECDSA256Key)
+
+	invalids := []updateRootRotationTestCase{
+		{
+			cluster:           api.Cluster{RootCA: startRootCA},
+			expectErrorString: "not currently in the middle of a root CA rotation",
+			desiredState:      api.RootRotationState_RotationDone,
+		},
+		{
+			cluster: api.Cluster{
+				RootCA: startRootCA,
+				RootRotationState: &api.RootRotationState{
+					State: api.RootRotationState_RotationAborted,
+				},
+			},
+			expectErrorString: "cannot progress to signer rotation unless the previous state was rotating the certificate",
+			desiredState:      api.RootRotationState_SignerRotation,
+		},
+		{
+			cluster: api.Cluster{
+				RootCA: startRootCA,
+				RootRotationState: &api.RootRotationState{
+					State: api.RootRotationState_SignerRotation,
+				},
+			},
+			expectErrorString: "invalid next rotation state",
+			desiredState:      api.RootRotationState_CertificateRotation,
+		},
+		{
+			cluster: api.Cluster{
+				RootCA: startRootCA,
+				RootRotationState: &api.RootRotationState{
+					State: api.RootRotationState_CertificateRotation,
+				},
+			},
+			expectErrorString: "cannot complete root rotation yet",
+			desiredState:      api.RootRotationState_RotationDone,
+		},
+	}
+
+	ts := newTestServer(t)
+	defer ts.Stop()
+
+	for i, invalid := range invalids {
+		invalid.cluster.ID = fmt.Sprintf("%d", i)
+		invalid.cluster.Spec.Annotations.Name = invalid.cluster.ID
+
+		var cluster *api.Cluster
+		require.NoError(t, ts.Store.Update(func(tx store.Tx) error {
+			if err := store.CreateCluster(tx, &invalid.cluster); err != nil {
+				return err
+			}
+			cluster = store.GetCluster(tx, invalid.cluster.ID)
+			require.NotNil(t, cluster)
+			return nil
+		}))
+
+		_, err := ts.Client.UpdateRootRotation(context.Background(), &api.UpdateRootRotationRequest{
+			ClusterID:    cluster.ID,
+			DesiredState: invalid.desiredState,
+		})
+		require.Error(t, err, invalid.expectErrorString)
+		require.Contains(t, err.Error(), invalid.expectErrorString)
+
+		ts.Store.View(func(tx store.ReadTx) {
+			gotCluster := store.GetCluster(tx, cluster.ID)
+			require.Equal(t, cluster, gotCluster)
+		})
+	}
+}
+
+// if the desired state == current state, do not error, but do nothing
+func TestUpdateRootRotationNoop(t *testing.T) {
+	startRootCA := getRootCAObj(t, testutils.ECDSA256SHA256Cert, testutils.ECDSA256Key)
+	ts := newTestServer(t)
+	defer ts.Stop()
+
+	for enumNum := range api.RootRotationState_State_name {
+		desiredState := api.RootRotationState_State(enumNum)
+		if desiredState == api.RootRotationState_RotationDone {
+			continue
+		}
+		idName := fmt.Sprintf("%d", enumNum)
+
+		var cluster *api.Cluster
+
+		require.NoError(t, ts.Store.Update(func(tx store.Tx) error {
+			err := store.CreateCluster(tx, &api.Cluster{
+				RootCA:            startRootCA,
+				RootRotationState: &api.RootRotationState{State: desiredState},
+				ID:                idName,
+				Spec: api.ClusterSpec{
+					Annotations: api.Annotations{
+						Name: idName,
+					},
+				},
+			})
+			if err != nil {
+				return err
+			}
+			cluster = store.GetCluster(tx, idName)
+			require.NotNil(t, cluster)
+			return nil
+		}))
+
+		_, err := ts.Client.UpdateRootRotation(context.Background(), &api.UpdateRootRotationRequest{
+			ClusterID:    cluster.ID,
+			DesiredState: desiredState,
+		})
+		require.NoError(t, err)
+
+		ts.Store.View(func(tx store.ReadTx) {
+			updatedCluster := store.GetCluster(tx, cluster.ID)
+			require.NotNil(t, updatedCluster)
+			require.Equal(t, cluster, updatedCluster)
+		})
+	}
+}
+
+func TestUpdateRootRotationValid(t *testing.T) {
+	cert, key := testutils.ECDSA256SHA256Cert, testutils.ECDSA256Key
+	otherCert, otherKey, err := testutils.CreateRootCertAndKey("rootCN")
+	require.NoError(t, err)
+
+	valids := []updateRootRotationTestCase{
+		{
+			cluster: api.Cluster{
+				RootCA: getRootCAObj(t, append(cert, otherCert...), key),
+				RootRotationState: &api.RootRotationState{
+					State:     api.RootRotationState_CertificateRotation,
+					NewCACert: otherCert,
+					NewCAKey:  otherKey,
+					OldCACert: cert,
+					OldCAKey:  key,
+				},
+			},
+			desiredState: api.RootRotationState_SignerRotation,
+			description:  "cert rotation -> signer rotation (internal CA)",
+			expectRootCA: getRootCAObj(t, append(otherCert, cert...), otherKey),
+			expectRotationState: &api.RootRotationState{
+				State:     api.RootRotationState_SignerRotation,
+				NewCACert: otherCert,
+				NewCAKey:  otherKey,
+				OldCACert: cert,
+				OldCAKey:  key,
+			},
+		},
+		{
+			cluster: api.Cluster{
+				RootCA: getRootCAObj(t, append(cert, otherCert...), key),
+				RootRotationState: &api.RootRotationState{
+					State:     api.RootRotationState_CertificateRotation,
+					NewCACert: otherCert,
+					NewCAKey:  otherKey,
+					OldCACert: cert,
+					OldCAKey:  key,
+				},
+			},
+			desiredState: api.RootRotationState_RotationAborted,
+			description:  "cert rotation -> rotation aborted (internal CA)",
+			expectRootCA: getRootCAObj(t, append(cert, otherCert...), key),
+			expectRotationState: &api.RootRotationState{
+				State:     api.RootRotationState_RotationAborted,
+				NewCACert: otherCert,
+				NewCAKey:  otherKey,
+				OldCACert: cert,
+				OldCAKey:  key,
+			},
+		},
+		{
+			cluster: api.Cluster{
+				RootCA: getRootCAObj(t, append(otherCert, cert...), otherKey),
+				RootRotationState: &api.RootRotationState{
+					State:     api.RootRotationState_SignerRotation,
+					NewCACert: otherCert,
+					NewCAKey:  otherKey,
+					OldCACert: cert,
+					OldCAKey:  key,
+				},
+			},
+			desiredState: api.RootRotationState_RotationAborted,
+			description:  "signer rotation -> rotation aborted (internal CA)",
+			expectRootCA: getRootCAObj(t, append(cert, otherCert...), key),
+			expectRotationState: &api.RootRotationState{
+				State:     api.RootRotationState_RotationAborted,
+				NewCACert: otherCert,
+				NewCAKey:  otherKey,
+				OldCACert: cert,
+				OldCAKey:  key,
+			},
+		},
+		{
+			cluster: api.Cluster{
+				RootCA: getRootCAObj(t, append(otherCert, cert...), otherKey),
+				RootRotationState: &api.RootRotationState{
+					State:     api.RootRotationState_SignerRotation,
+					NewCACert: otherCert,
+					NewCAKey:  otherKey,
+					OldCACert: cert,
+					OldCAKey:  key,
+				},
+			},
+			desiredState: api.RootRotationState_RotationDone,
+			description:  "signer rotation -> rotation done (internal CA)",
+			expectRootCA: getRootCAObj(t, otherCert, otherKey),
+		},
+		{
+			cluster: api.Cluster{
+				RootCA: getRootCAObj(t, append(cert, otherCert...), key),
+				RootRotationState: &api.RootRotationState{
+					State:     api.RootRotationState_RotationAborted,
+					NewCACert: otherCert,
+					NewCAKey:  otherKey,
+					OldCACert: cert,
+					OldCAKey:  key,
+				},
+			},
+			desiredState: api.RootRotationState_RotationDone,
+			description:  "rotation aborted -> rotation done (internal CA)",
+			expectRootCA: getRootCAObj(t, cert, key),
+		},
+		{
+			cluster: api.Cluster{
+				RootCA: getRootCAObj(t, append(cert, otherCert...), key),
+				RootRotationState: &api.RootRotationState{
+					State:     api.RootRotationState_CertificateRotation,
+					NewCACert: otherCert,
+					OldCACert: cert,
+					OldCAKey:  key,
+				},
+			},
+			desiredState: api.RootRotationState_SignerRotation,
+			description:  "cert rotation -> signer rotation (external CA)",
+			expectRootCA: getRootCAObj(t, append(otherCert, cert...), nil),
+			expectRotationState: &api.RootRotationState{
+				State:     api.RootRotationState_SignerRotation,
+				NewCACert: otherCert,
+				OldCACert: cert,
+				OldCAKey:  key,
+			},
+		},
+		{
+			cluster: api.Cluster{
+				RootCA: getRootCAObj(t, append(otherCert, cert...), nil),
+				RootRotationState: &api.RootRotationState{
+					State:     api.RootRotationState_SignerRotation,
+					NewCACert: otherCert,
+					OldCACert: cert,
+					OldCAKey:  key,
+				},
+			},
+			desiredState: api.RootRotationState_RotationAborted,
+			description:  "signer rotation -> rotation aborted (external CA)",
+			expectRootCA: getRootCAObj(t, append(cert, otherCert...), key),
+			expectRotationState: &api.RootRotationState{
+				State:     api.RootRotationState_RotationAborted,
+				NewCACert: otherCert,
+				OldCACert: cert,
+				OldCAKey:  key,
+			},
+		}}
+
+	ts := newTestServer(t)
+	defer ts.Stop()
+
+	for i, valid := range valids {
+		valid.cluster.ID = fmt.Sprintf("%d", i)
+		valid.cluster.Spec.Annotations.Name = valid.cluster.ID
+
+		var cluster *api.Cluster
+		require.NoError(t, ts.Store.Update(func(tx store.Tx) error {
+			if err := store.CreateCluster(tx, &valid.cluster); err != nil {
+				return err
+			}
+			cluster = store.GetCluster(tx, valid.cluster.ID)
+			require.NotNil(t, cluster)
+			return nil
+		}))
+
+		_, err := ts.Client.UpdateRootRotation(context.Background(), &api.UpdateRootRotationRequest{
+			ClusterID:    valid.cluster.ID,
+			DesiredState: valid.desiredState,
+		})
+		require.NoError(t, err, valid.description)
+
+		ts.Store.View(func(tx store.ReadTx) {
+			gotCluster := store.GetCluster(tx, valid.cluster.ID)
+			require.NotEqual(t, cluster.Meta.Version, gotCluster.Meta.Version, valid.description)
+			require.NotEqual(t, cluster.RootCA.JoinTokens, gotCluster.RootCA.JoinTokens, valid.description) // join tokens have changed
+			// can't compare them, because they're random
+			gotCluster.RootCA.JoinTokens = api.JoinTokens{}
+			valid.expectRootCA.JoinTokens = api.JoinTokens{}
+			require.Equal(t, valid.expectRootCA, gotCluster.RootCA, valid.description)
+			if valid.expectRotationState == nil {
+				require.Nil(t, gotCluster.RootRotationState, valid.description)
+			} else {
+				require.Equal(t, *valid.expectRotationState, *gotCluster.RootRotationState, valid.description)
+			}
+		})
 	}
 }

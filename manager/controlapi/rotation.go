@@ -13,6 +13,7 @@ import (
 	"github.com/cloudflare/cfssl/helpers"
 	"github.com/docker/swarmkit/api"
 	"github.com/docker/swarmkit/ca"
+	"github.com/docker/swarmkit/manager/state/store"
 	"golang.org/x/net/context"
 )
 
@@ -55,9 +56,125 @@ func startRootRotation(cluster *api.Cluster, rootCACert, rootCAKey []byte) (err 
 	return
 }
 
+// Abort root rotation - if we have progressed beyond the certificate rotation phase, then rotate the root CA
+// back to be signed with the old key.  This function assumes that a root rotation is currently in progress,
+// so the state must be CertificateRotation, SignerRotation, or RotationAborted.
+func abortRotation(cluster *api.Cluster) error {
+	// we have to switch all the TLS certs back to be signed by the old cert.  However, because some new TLS certs
+	// may already have been distributed, we still have to trust both the new and the old certificate until all
+	// TLS certs have been rotated such that they are signed by the old key.
+	apiRootCA, err := getAPIRootCA(
+		append(cluster.RootRotationState.OldCACert, cluster.RootRotationState.NewCACert...),
+		cluster.RootRotationState.OldCAKey,
+	)
+	if err != nil {
+		return grpc.Errorf(codes.Internal, "invalid RootRotationState object: %v", err)
+	}
+	cluster.RootCA = apiRootCA
+	cluster.RootRotationState.State = api.RootRotationState_RotationAborted
+	return nil
+}
+
+// Moves from certificate rotation to signer rotation - this means that all new TLS certificates will be signed with
+// the new root key, rather than the old root key.  This function assumes that a root rotation is currently in progress,
+// so the state must be CertificateRotation, SignerRotation, or RotationAborted.
+func continueRotation(cluster *api.Cluster) error {
+	// We can only start to rotate TLS certificates if we were previously in the root certificate rotation phase
+	if cluster.RootRotationState.State != api.RootRotationState_CertificateRotation {
+		return grpc.Errorf(codes.FailedPrecondition,
+			"cannot progress to signer rotation unless the previous state was rotating the certificate")
+	}
+
+	// the next state is SignerRotation, where we start issuing TLS certificates using the new root certificate
+	apiRootCA, err := getAPIRootCA(
+		append(cluster.RootRotationState.NewCACert, cluster.RootRotationState.OldCACert...),
+		cluster.RootRotationState.NewCAKey,
+	)
+	if err != nil {
+		return grpc.Errorf(codes.Internal, "invalid RootRotationState object: %v", err)
+	}
+	cluster.RootCA = apiRootCA
+	cluster.RootRotationState.State = api.RootRotationState_SignerRotation
+	return nil
+}
+
+// Finishes the root rotation - this means that the root bundle will now consist only of 1 certificate: either the
+// new certificate, if root rotation succeeded, or the old certificate, if root rotation was aborted.  This function
+// assumes that a root rotation is currently in progress,
+// so the state must be CertificateRotation, SignerRotation, or RotationAborted.
+func finishRootRotation(cluster *api.Cluster) error {
+	var (
+		apiRootCA api.RootCA
+		err       error
+	)
+
+	switch cluster.RootRotationState.State {
+	case api.RootRotationState_SignerRotation:
+		// throw away the old certificate and key and just use the new certificate and key
+		apiRootCA, err = getAPIRootCA(
+			cluster.RootRotationState.NewCACert,
+			cluster.RootRotationState.NewCAKey,
+		)
+	case api.RootRotationState_RotationAborted:
+		// throw away the new certificate and key and just use the old certificate and key
+		apiRootCA, err = getAPIRootCA(
+			cluster.RootRotationState.OldCACert,
+			cluster.RootRotationState.OldCAKey,
+		)
+	default:
+		return grpc.Errorf(codes.FailedPrecondition, "cannot complete root rotation yet")
+	}
+
+	if err != nil {
+		return grpc.Errorf(codes.Internal, "invalid RootRotationState object: %v", err)
+	}
+	cluster.RootCA = apiRootCA
+	cluster.RootRotationState = nil
+	return nil
+}
+
 // UpdateRootRotation forcefully transitions the root rotation from the current phase to the desired phase
 func (s *Server) UpdateRootRotation(ctx context.Context, request *api.UpdateRootRotationRequest) (*api.UpdateRootRotationResponse, error) {
-	return nil, grpc.Errorf(codes.Unimplemented, "not yet implemented")
+	if request.ClusterID == "" {
+		return nil, grpc.Errorf(codes.InvalidArgument, errInvalidArgument.Error())
+	}
+
+	err := s.store.Update(func(tx store.Tx) error {
+		cluster := store.GetCluster(tx, request.ClusterID)
+		if cluster == nil {
+			return grpc.Errorf(codes.NotFound, "cluster %s not found", request.ClusterID)
+		}
+		if cluster.RootRotationState == nil || cluster.RootRotationState.State == api.RootRotationState_RotationDone {
+			return grpc.Errorf(codes.FailedPrecondition, "not currently in the middle of a root CA rotation")
+		}
+
+		switch request.DesiredState {
+		case cluster.RootRotationState.State:
+			// we are already in the desired state - don't error, but do nothing
+			return nil
+		case api.RootRotationState_RotationAborted:
+			if err := abortRotation(cluster); err != nil {
+				return err
+			}
+		case api.RootRotationState_SignerRotation:
+			if err := continueRotation(cluster); err != nil {
+				return err
+			}
+		case api.RootRotationState_RotationDone:
+			if err := finishRootRotation(cluster); err != nil {
+				return err
+			}
+		default:
+			return grpc.Errorf(codes.InvalidArgument, "invalid next rotation state")
+		}
+
+		return store.UpdateCluster(tx, cluster)
+	})
+
+	if err != nil {
+		return nil, err
+	}
+	return &api.UpdateRootRotationResponse{}, nil
 }
 
 // validateAndMaybeStartRootRotation validates a cluster update's root rotation request and spec, and updates the cluster
