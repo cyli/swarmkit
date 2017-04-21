@@ -39,12 +39,14 @@ type session struct {
 	assignments   chan *api.AssignmentsMessage
 	subscriptions chan *api.SubscriptionMessage
 
+	cancel     func()
 	registered chan struct{} // closed registration
 	closed     chan struct{}
 	closeOnce  sync.Once
 }
 
 func newSession(ctx context.Context, agent *Agent, delay time.Duration, sessionID string, description *api.NodeDescription) *session {
+	sessionCtx, sessionCancel := context.WithCancel(ctx)
 	s := &session{
 		agent:         agent,
 		sessionID:     sessionID,
@@ -54,6 +56,7 @@ func newSession(ctx context.Context, agent *Agent, delay time.Duration, sessionI
 		subscriptions: make(chan *api.SubscriptionMessage),
 		registered:    make(chan struct{}),
 		closed:        make(chan struct{}),
+		cancel:        sessionCancel,
 	}
 
 	// TODO(stevvooe): Need to move connection management up a level or create
@@ -69,7 +72,7 @@ func newSession(ctx context.Context, agent *Agent, delay time.Duration, sessionI
 	}
 	s.conn = cc
 
-	go s.run(ctx, delay, description)
+	go s.run(sessionCtx, delay, description)
 	return s
 }
 
@@ -402,6 +405,9 @@ func (s *session) sendError(err error) {
 // of event loop.
 func (s *session) close() error {
 	s.closeOnce.Do(func() {
+		if s.cancel != nil {
+			s.cancel()
+		}
 		if s.conn != nil {
 			s.conn.Close(false)
 		}
