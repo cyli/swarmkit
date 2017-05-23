@@ -98,6 +98,11 @@ type Config struct {
 	// for connections to the remote API (including the raft service).
 	AdvertiseRemoteAPI string
 
+	// AdvertiseAutodetected specifies that the advertise address was
+	// autodetected, and therefore should be updated automatically if it
+	// changes from the perspective of other nodes.
+	AdvertiseAutodetected bool
+
 	// Executor specifies the executor to use for the agent.
 	Executor exec.Executor
 
@@ -219,7 +224,7 @@ func New(c *Config) (*Node, error) {
 }
 
 // BindRemote starts a listener that exposes the remote API.
-func (n *Node) BindRemote(ctx context.Context, listenAddr string, advertiseAddr string) error {
+func (n *Node) BindRemote(ctx context.Context, listenAddr string, advertiseAddr string, advertiseAutodetected bool) error {
 	n.RLock()
 	defer n.RUnlock()
 
@@ -228,8 +233,9 @@ func (n *Node) BindRemote(ctx context.Context, listenAddr string, advertiseAddr 
 	}
 
 	return n.manager.BindRemote(ctx, manager.RemoteAddrs{
-		ListenAddr:    listenAddr,
-		AdvertiseAddr: advertiseAddr,
+		ListenAddr:            listenAddr,
+		AdvertiseAddr:         advertiseAddr,
+		AdvertiseAutodetected: advertiseAutodetected,
 	})
 }
 
@@ -814,8 +820,9 @@ func (n *Node) runManager(ctx context.Context, securityConfig *ca.SecurityConfig
 	var remoteAPI *manager.RemoteAddrs
 	if n.config.ListenRemoteAPI != "" {
 		remoteAPI = &manager.RemoteAddrs{
-			ListenAddr:    n.config.ListenRemoteAPI,
-			AdvertiseAddr: n.config.AdvertiseRemoteAPI,
+			ListenAddr:            n.config.ListenRemoteAPI,
+			AdvertiseAddr:         n.config.AdvertiseRemoteAPI,
+			AdvertiseAutodetected: n.config.AdvertiseAutodetected,
 		}
 	}
 
