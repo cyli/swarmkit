@@ -57,7 +57,7 @@ func uglifyOnePEM(pemBytes []byte) []byte {
 	return append(append([]byte("\n\t   "), pem.EncodeToMemory(pemBlock)...), []byte("   \t")...)
 }
 
-func getSecurityConfig(t *testing.T, localRootCA *ca.RootCA, cluster *api.Cluster) *ca.SecurityConfig {
+func getSecurityConfig(t *testing.T, localRootCA *ca.RootCA) *ca.SecurityConfig {
 	tempdir, err := ioutil.TempDir("", "test-validate-CA")
 	require.NoError(t, err)
 	defer os.RemoveAll(tempdir)
@@ -300,14 +300,8 @@ func TestValidateCAConfigInvalidValues(t *testing.T) {
 			expectErrorString: "expired",
 		},
 	} {
-		cluster := &api.Cluster{
-			RootCA: invalid.rootCA,
-			Spec: api.ClusterSpec{
-				CAConfig: invalid.caConfig,
-			},
-		}
-		secConfig := getSecurityConfig(t, &localRootCA, cluster)
-		_, err := validateCAConfig(context.Background(), secConfig, cluster)
+		secConfig := getSecurityConfig(t, &localRootCA)
+		_, err := validateCAConfig(context.Background(), secConfig, &invalid.caConfig, &invalid.rootCA, ca.DefaultRootCN)
 		require.Error(t, err, invalid.expectErrorString)
 		require.Equal(t, codes.InvalidArgument, grpc.Code(err), invalid.expectErrorString)
 		require.Contains(t, grpc.ErrorDesc(err), invalid.expectErrorString)
@@ -316,18 +310,13 @@ func TestValidateCAConfigInvalidValues(t *testing.T) {
 
 func runValidTestCases(t *testing.T, testcases []*rootCARotationTestCase, localRootCA *ca.RootCA) {
 	for _, valid := range testcases {
-		cluster := &api.Cluster{
-			RootCA: *valid.rootCA.Copy(),
-			Spec: api.ClusterSpec{
-				CAConfig: valid.caConfig,
-			},
-		}
-		secConfig := getSecurityConfig(t, localRootCA, cluster)
-		result, err := validateCAConfig(context.Background(), secConfig, cluster)
+		oldValidRootCA := valid.rootCA.Copy()
+		secConfig := getSecurityConfig(t, localRootCA)
+		result, err := validateCAConfig(context.Background(), secConfig, &valid.caConfig, &valid.rootCA, ca.DefaultRootCN)
 		require.NoError(t, err, valid.description)
 
-		// ensure that the cluster was not mutated
-		require.Equal(t, valid.rootCA, cluster.RootCA)
+		// ensure that the passed root CA was not mutated
+		require.Equal(t, oldValidRootCA, &valid.rootCA)
 
 		// Because join tokens are random, we can't predict exactly what it is, so this needs to be manually checked
 		if valid.expectJoinTokenChange {

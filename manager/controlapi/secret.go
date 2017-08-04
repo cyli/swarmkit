@@ -7,6 +7,7 @@ import (
 	"github.com/Sirupsen/logrus"
 	"github.com/docker/swarmkit/api"
 	"github.com/docker/swarmkit/api/validation"
+	"github.com/docker/swarmkit/ca"
 	"github.com/docker/swarmkit/identity"
 	"github.com/docker/swarmkit/log"
 	"github.com/docker/swarmkit/manager/state/store"
@@ -15,12 +16,33 @@ import (
 	"google.golang.org/grpc/codes"
 )
 
-// assumes spec is not nil
-func secretFromSecretSpec(spec *api.SecretSpec) *api.Secret {
-	return &api.Secret{
+// assumes spec is not nil - this is intended to be used only for creating secrets
+func createSecretFromSecretSpec(spec *api.SecretSpec) (*api.Secret, error) {
+	secret := &api.Secret{
 		ID:   identity.NewID(),
 		Spec: *spec,
 	}
+	// CAInfo is the only special secret type we have to handle - if a spec contains leaf certificate info,
+	// that is fine, it will just be a leaf certificate whose life cycle isn't managed by swarm
+	if caInfo := spec.GetCA(); caInfo != nil {
+		signingCert := caInfo.Certificate
+		signingKey := spec.Data
+		var (
+			rootCA ca.RootCA
+			err    error
+		)
+
+		switch {
+		case signingCert == nil && signingKey == nil: // create a new root CA
+			rootCA, err = ca.CreateRootCA(spec.Annotations.Name)
+		}
+
+		secret.Special = &api.Secret_PKI{
+			PKI: &api.PKISecret{},
+		}
+	}
+
+	return secret, nil
 }
 
 // GetSecret returns a `GetSecretResponse` with a `Secret` with the same

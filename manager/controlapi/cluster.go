@@ -125,7 +125,7 @@ func (s *Server) UpdateCluster(ctx context.Context, request *api.UpdateClusterRe
 			cluster.RootCA.JoinTokens.Manager = ca.GenerateJoinToken(&rootCA)
 		}
 
-		updatedRootCA, err := validateCAConfig(ctx, s.securityConfig, cluster)
+		updatedRootCA, err := validateCAConfig(ctx, s.securityConfig, &cluster.Spec.CAConfig, &cluster.RootCA, ca.DefaultRootCN)
 		if err != nil {
 			return err
 		}
