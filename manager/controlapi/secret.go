@@ -35,6 +35,7 @@ func createSecretFromSecretSpec(spec *api.SecretSpec) (*api.Secret, error) {
 		switch {
 		case signingCert == nil && signingKey == nil: // create a new root CA
 			rootCA, err = ca.CreateRootCA(spec.Annotations.Name)
+		case signingCert != nil && signignK != nil: //
 		}
 
 		secret.Special = &api.Secret_PKI{
