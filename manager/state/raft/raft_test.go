@@ -3,8 +3,6 @@ package raft_test
 import (
 	"errors"
 	"fmt"
-	"io/ioutil"
-	"log"
 	"math/rand"
 	"os"
 	"reflect"
@@ -14,7 +12,6 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/grpclog"
 
 	"golang.org/x/net/context"
 
@@ -46,8 +43,8 @@ var tc *cautils.TestCA
 func TestMain(m *testing.M) {
 	tc = cautils.NewTestCA(nil)
 
-	grpclog.SetLogger(log.New(ioutil.Discard, "", log.LstdFlags))
-	logrus.SetOutput(ioutil.Discard)
+	// grpclog.SetLogger(log.New(ioutil.Discard, "", log.LstdFlags))
+	// logrus.SetOutput(ioutil.Discard)
 
 	// Set a smaller segment size so we don't incur cost preallocating
 	// space on old filesystems like HFS+.
@@ -215,6 +212,7 @@ func TestRaftLogReplication(t *testing.T) {
 
 func TestRaftWedgedManager(t *testing.T) {
 	t.Parallel()
+	logrus.SetLevel(logrus.DebugLevel)
 
 	nodeOpts := raft.NodeOptions{
 		DisableStackDump: true,

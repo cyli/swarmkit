@@ -537,21 +537,28 @@ func (n *Node) Run(ctx context.Context) error {
 	for {
 		select {
 		case <-n.ticker.C():
+			log.G(ctx).Debug("RAFT TICK: ticker ticked - calls raftNode.Tick()")
 			n.raftNode.Tick()
 
 			if n.leader() == raft.None {
+				log.G(ctx).Debug("RAFT TICK: during tick, there was no leader")
 				atomic.AddUint32(&n.ticksWithNoLeader, 1)
 			} else {
 				atomic.StoreUint32(&n.ticksWithNoLeader, 0)
 			}
 		case rd := <-n.raftNode.Ready():
+			log.G(ctx).Debug("RAFTNODE READY: getting raft config")
 			raftConfig := n.getCurrentRaftConfig()
 
 			// Save entries to storage
+			log.G(ctx).Debug("RAFTNODE READY: saving everything to storage")
 			if err := n.saveToStorage(ctx, &raftConfig, rd.HardState, rd.Entries, rd.Snapshot); err != nil {
 				return errors.Wrap(err, "failed to save entries to storage")
 			}
 
+			log.G(ctx).Debugf(
+				"RAFTNODE READY: wasLeader (%v), softState==nil (%v), wedged (%v)",
+				wasLeader, rd.SoftState == nil, n.memoryStore.Wedged())
 			if wasLeader &&
 				(rd.SoftState == nil || rd.SoftState.RaftState == raft.StateLeader) &&
 				n.memoryStore.Wedged() &&
@@ -570,6 +577,7 @@ func (n *Node) Run(ctx context.Context) error {
 
 			for _, msg := range rd.Messages {
 				// Send raft messages to peers
+				log.G(ctx).Debugf("RAFTNODE READY: sending message to peers: %v", msg)
 				if err := n.transport.Send(msg); err != nil {
 					log.G(ctx).WithError(err).Error("failed to send message to member")
 				}
@@ -580,6 +588,7 @@ func (n *Node) Run(ctx context.Context) error {
 			// saveToStorage.
 			if !raft.IsEmptySnap(rd.Snapshot) {
 				// Load the snapshot data into the store
+				log.G(ctx).Debugf("RAFTNODE READY: got a snapshot, restoring it now to memory store (as opposed to raft store")
 				if err := n.restoreFromSnapshot(ctx, rd.Snapshot.Data); err != nil {
 					log.G(ctx).WithError(err).Error("failed to restore cluster from snapshot")
 				}
@@ -599,9 +608,11 @@ func (n *Node) Run(ctx context.Context) error {
 			// not deadlock.
 
 			if rd.SoftState != nil {
+				log.G(ctx).Debugf("RAFTNODE READY: we are the leader? %v", rd.SoftState.RaftState == raft.StateLeader)
 				if wasLeader && rd.SoftState.RaftState != raft.StateLeader {
 					wasLeader = false
 					if atomic.LoadUint32(&n.signalledLeadership) == 1 {
+						log.G(ctx).Debugf("RAFTNODE READY: broadcast that we are a follower now")
 						atomic.StoreUint32(&n.signalledLeadership, 0)
 						n.leadershipBroadcast.Publish(IsFollower)
 					}
@@ -624,6 +635,7 @@ func (n *Node) Run(ctx context.Context) error {
 			}
 
 			// Process committed entries
+			log.G(ctx).Debugf("RAFTNODE READY: processing %d committed entries", len(rd.CommittedEntries))
 			for _, entry := range rd.CommittedEntries {
 				if err := n.processCommitted(ctx, entry); err != nil {
 					log.G(ctx).WithError(err).Error("failed to process committed entries")
@@ -631,25 +643,30 @@ func (n *Node) Run(ctx context.Context) error {
 			}
 
 			// in case the previous attempt to update the key failed
+			log.G(ctx).Debugf("RAFTNODE READY: maybe finish encryption key rotation")
 			n.maybeMarkRotationFinished(ctx)
 
 			// Trigger a snapshot every once in awhile
 			if n.snapshotInProgress == nil &&
 				(n.needsSnapshot(ctx) || raftConfig.SnapshotInterval > 0 &&
 					n.appliedIndex-n.snapshotMeta.Index >= raftConfig.SnapshotInterval) {
+				log.G(ctx).Debugf("RAFTNODE READY: triggering snapshot")
 				n.doSnapshot(ctx, raftConfig)
 			}
 
 			if wasLeader && atomic.LoadUint32(&n.signalledLeadership) != 1 {
+				log.G(ctx).Debugf("RAFTNODE READY: we are a leader and would need to broadcast leadership")
 				// If all the entries in the log have become
 				// committed, broadcast our leadership status.
 				if n.caughtUp() {
+					log.G(ctx).Debugf("RAFTNODE READY: we're caught up and going to broadcast leadership")
 					atomic.StoreUint32(&n.signalledLeadership, 1)
 					n.leadershipBroadcast.Publish(IsLeader)
 				}
 			}
 
 			// Advance the state machine
+			log.G(ctx).Debugf("RAFTNODE READY: advancing the raftNode")
 			n.raftNode.Advance()
 
 			// On the first startup, or if we are the only
@@ -661,11 +678,13 @@ func (n *Node) Run(ctx context.Context) error {
 					n.campaignWhenAble = false
 				}
 				if len(members) == 1 && members[n.Config.ID] != nil {
+					log.G(ctx).Debugf("RAFTNODE READY: we're the only member, so campaign")
 					n.raftNode.Campaign(ctx)
 				}
 			}
 
 		case snapshotMeta := <-n.snapshotInProgress:
+			log.G(ctx).Debugf("RAFT snapshotInProgress")
 			raftConfig := n.getCurrentRaftConfig()
 			if snapshotMeta.Index > n.snapshotMeta.Index {
 				n.snapshotMeta = snapshotMeta
@@ -682,6 +701,7 @@ func (n *Node) Run(ctx context.Context) error {
 				n.doSnapshot(ctx, raftConfig)
 			}
 		case <-n.keyRotator.RotationNotify():
+			log.G(ctx).Debugf("RAFT RotationNotify")
 			// There are 2 separate checks:  rotationQueued, and n.needsSnapshot().
 			// We set rotationQueued so that when we are notified of a rotation, we try to
 			// do a snapshot as soon as possible.  However, if there is an error while doing
@@ -695,6 +715,7 @@ func (n *Node) Run(ctx context.Context) error {
 				n.doSnapshot(ctx, n.getCurrentRaftConfig())
 			}
 		case <-ctx.Done():
+			log.G(ctx).Debugf("We are done with the raft node")
 			return nil
 		}
 	}
@@ -1594,6 +1615,7 @@ func (n *Node) saveToStorage(
 ) (err error) {
 
 	if !raft.IsEmptySnap(snapshot) {
+		log.G(ctx).Debugf("RAFT saveToStorage: Saving snapshot")
 		if err := n.raftLogger.SaveSnapshot(snapshot); err != nil {
 			return errors.Wrap(err, "failed to save snapshot")
 		}
@@ -1603,8 +1625,10 @@ func (n *Node) saveToStorage(
 		if err = n.raftStore.ApplySnapshot(snapshot); err != nil {
 			return errors.Wrap(err, "failed to apply snapshot on raft node")
 		}
+		log.G(ctx).Debugf("RAFT saveToStorage: saved and applied snapshot")
 	}
 
+	log.G(ctx).Debugf("RAFT saveToStorage: saving %d entries: %v", len(entries), entries)
 	if err := n.raftLogger.SaveEntries(hardState, entries); err != nil {
 		return errors.Wrap(err, "failed to save raft log entries")
 	}
@@ -1616,6 +1640,7 @@ func (n *Node) saveToStorage(
 		}
 	}
 
+	log.G(ctx).Debugf("RAFT saveToStorage: applying entries to raft store")
 	if err = n.raftStore.Append(entries); err != nil {
 		return errors.Wrap(err, "failed to append raft log entries")
 	}
@@ -1741,6 +1766,7 @@ func (n *Node) processCommitted(ctx context.Context, entry raftpb.Entry) error {
 }
 
 func (n *Node) processEntry(ctx context.Context, entry raftpb.Entry) error {
+	log.G(ctx).Debugf("RAFT processEntry: processing a node change entry")
 	r := &api.InternalRaftRequest{}
 	err := proto.Unmarshal(entry.Data, r)
 	if err != nil {
