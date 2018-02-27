@@ -59,6 +59,51 @@ func (n noopCrypter) Algorithm() api.MaybeEncryptedRecord_Algorithm {
 // decrypt any data
 var NoopCrypter = noopCrypter{}
 
+// specificDecryptor represents a specific type of Decrypter, like NaclSecretbox or Fernet.
+// It does not apply to a more general decrypter like MultiDecrypter.
+type specificDecrypter interface {
+	Decrypter
+	Algorithm() api.MaybeEncryptedRecord_Algorithm
+}
+
+// MultiDecrypter is a decrypter that will attempts to decrypt with multiple decrypters
+type MultiDecrypter map[api.MaybeEncryptedRecord_Algorithm][]Decrypter
+
+// Decrypt tries to decrypt using any decrypters that match the given algorithm.
+func (m MultiDecrypter) Decrypt(r api.MaybeEncryptedRecord) (result []byte, err error) {
+	decrypters, ok := m[r.Algorithm]
+	if !ok {
+		return nil, fmt.Errorf("cannot decrypt record encrypted using %s",
+			api.MaybeEncryptedRecord_Algorithm_name[int32(r.Algorithm)])
+	}
+	for _, d := range decrypters {
+		result, err = d.Decrypt(r)
+		if err == nil {
+			return
+		}
+	}
+	return
+}
+
+// NewMultiDecrypter returns a new MultiDecrypter given multiple Decrypters.  If any of
+// the Decrypters are also MultiDecrypters, they are flattened into a single map, but
+// it does not deduplicate any decrypters.
+// Note that if something is neither a MultiDecrypter nor a specificDecrypter, it is
+// ignored.
+func NewMultiDecrypter(decrypters ...Decrypter) MultiDecrypter {
+	m := MultiDecrypter{}
+	for _, d := range decrypters {
+		if md, ok := d.(MultiDecrypter); ok {
+			for algo, dec := range md {
+				m[algo] = append(m[algo], dec...)
+			}
+		} else if sd, ok := d.(specificDecrypter); ok {
+			m[sd.Algorithm()] = append(m[sd.Algorithm()], sd)
+		}
+	}
+	return m
+}
+
 // Decrypt turns a slice of bytes serialized as an MaybeEncryptedRecord into a slice of plaintext bytes
 func Decrypt(encryptd []byte, decrypter Decrypter) ([]byte, error) {
 	if decrypter == nil {
