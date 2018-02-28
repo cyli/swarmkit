@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/docker/swarmkit/api"
+	"github.com/docker/swarmkit/fips"
 	"github.com/gogo/protobuf/proto"
 	"github.com/pkg/errors"
 )
@@ -97,6 +98,10 @@ func Encrypt(plaintext []byte, encrypter Encrypter) ([]byte, error) {
 
 // Defaults returns a default encrypter and decrypter
 func Defaults(key []byte) (Encrypter, Decrypter) {
+	if fips.Enabled() {
+		f := NewFernet(key)
+		return f, f
+	}
 	n := NewNACLSecretbox(key)
 	return n, n
 }
