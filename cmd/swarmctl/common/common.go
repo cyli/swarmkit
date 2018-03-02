@@ -1,10 +1,11 @@
 package common
 
 import (
-	"crypto/tls"
 	"net"
 	"strings"
 	"time"
+
+	"github.com/docker/go-connections/tlsconfig"
 
 	"github.com/docker/swarmkit/api"
 	"github.com/docker/swarmkit/xnet"
@@ -34,7 +35,9 @@ func DialConn(cmd *cobra.Command) (*grpc.ClientConn, error) {
 	}
 
 	opts := []grpc.DialOption{}
-	insecureCreds := credentials.NewTLS(&tls.Config{InsecureSkipVerify: true})
+	conf := tlsconfig.ClientDefault()
+	conf.InsecureSkipVerify = true
+	insecureCreds := credentials.NewTLS(conf)
 	opts = append(opts, grpc.WithTransportCredentials(insecureCreds))
 	opts = append(opts, grpc.WithDialer(
 		func(addr string, timeout time.Duration) (net.Conn, error) {

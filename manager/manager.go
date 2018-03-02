@@ -1,7 +1,6 @@
 package manager
 
 import (
-	"crypto/tls"
 	"encoding/pem"
 	"fmt"
 	"net"
@@ -11,6 +10,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/docker/go-connections/tlsconfig"
 
 	"github.com/docker/docker/pkg/plugingetter"
 	"github.com/docker/go-events"
@@ -701,7 +702,9 @@ func (m *Manager) updateKEK(ctx context.Context, cluster *api.Cluster) error {
 		// a best effort attempt to update the TLS certificate - if it fails, it'll be updated the next time it renews;
 		// don't wait because it might take a bit
 		go func() {
-			insecureCreds := credentials.NewTLS(&tls.Config{InsecureSkipVerify: true})
+			conf := tlsconfig.ClientDefault()
+			conf.InsecureSkipVerify = true
+			insecureCreds := credentials.NewTLS(conf)
 
 			conn, err := grpc.Dial(
 				m.config.ControlAPI,

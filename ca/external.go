@@ -18,6 +18,7 @@ import (
 	"github.com/cloudflare/cfssl/config"
 	"github.com/cloudflare/cfssl/csr"
 	"github.com/cloudflare/cfssl/signer"
+	"github.com/docker/go-connections/tlsconfig"
 	"github.com/docker/swarmkit/log"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -56,11 +57,10 @@ type ExternalCA struct {
 // NewExternalCATLSConfig takes a TLS certificate and root pool and returns a TLS config that can be updated
 // without killing existing connections
 func NewExternalCATLSConfig(certs []tls.Certificate, rootPool *x509.CertPool) *tls.Config {
-	return &tls.Config{
-		Certificates: certs,
-		RootCAs:      rootPool,
-		MinVersion:   tls.VersionTLS12,
-	}
+	conf := tlsconfig.ServerDefault()
+	conf.Certificates = certs
+	conf.RootCAs = rootPool
+	return conf
 }
 
 // NewExternalCA creates a new ExternalCA which uses the given tlsConfig to

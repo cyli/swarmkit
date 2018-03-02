@@ -12,6 +12,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/docker/go-connections/tlsconfig"
+
 	cfconfig "github.com/cloudflare/cfssl/config"
 	events "github.com/docker/go-events"
 	"github.com/docker/swarmkit/api"
@@ -555,16 +557,17 @@ func NewServerTLSConfig(certs []tls.Certificate, rootCAPool *x509.CertPool) (*tl
 		return nil, errors.New("valid root CA pool required")
 	}
 
-	return &tls.Config{
-		Certificates: certs,
-		// Since we're using the same CA server to issue Certificates to new nodes, we can't
-		// use tls.RequireAndVerifyClientCert
-		ClientAuth:               tls.VerifyClientCertIfGiven,
-		RootCAs:                  rootCAPool,
-		ClientCAs:                rootCAPool,
-		PreferServerCipherSuites: true,
-		MinVersion:               tls.VersionTLS12,
-	}, nil
+	// ServerDefault sets the min TLS version, preferred cipher suites, and a
+	// small set of supported cipher suites
+	conf := tlsconfig.ServerDefault()
+	conf.Certificates = certs
+	// Since we're using the same CA server to issue Certificates to new nodes, we can't
+	// use tls.RequireAndVerifyClientCert
+	conf.ClientAuth = tls.VerifyClientCertIfGiven
+	conf.RootCAs = rootCAPool
+	conf.ClientCAs = rootCAPool
+
+	return conf, nil
 }
 
 // NewClientTLSConfig returns a tls.Config configured for a TLS Client, given a tls.Certificate
@@ -574,12 +577,12 @@ func NewClientTLSConfig(certs []tls.Certificate, rootCAPool *x509.CertPool, serv
 		return nil, errors.New("valid root CA pool required")
 	}
 
-	return &tls.Config{
-		ServerName:   serverName,
-		Certificates: certs,
-		RootCAs:      rootCAPool,
-		MinVersion:   tls.VersionTLS12,
-	}, nil
+	// ClientDefault sets the min TLS version and a small set of supported cipher suites
+	conf := tlsconfig.ClientDefault()
+	conf.ServerName = serverName
+	conf.Certificates = certs
+	conf.RootCAs = rootCAPool
+	return conf, nil
 }
 
 // NewClientTLSCredentials returns GRPC credentials for a TLS GRPC client, given a tls.Certificate

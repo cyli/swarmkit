@@ -2,7 +2,6 @@ package node
 
 import (
 	"bytes"
-	"crypto/tls"
 	"encoding/json"
 	"io/ioutil"
 	"net"
@@ -13,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/docker/go-connections/tlsconfig"
 
 	"github.com/boltdb/bolt"
 	"github.com/docker/docker/pkg/plugingetter"
@@ -756,7 +757,9 @@ func (n *Node) initManagerConnection(ctx context.Context, ready chan<- struct{})
 		grpc.WithUnaryInterceptor(grpc_prometheus.UnaryClientInterceptor),
 		grpc.WithStreamInterceptor(grpc_prometheus.StreamClientInterceptor),
 	}
-	insecureCreds := credentials.NewTLS(&tls.Config{InsecureSkipVerify: true})
+	conf := tlsconfig.ClientDefault()
+	conf.InsecureSkipVerify = true
+	insecureCreds := credentials.NewTLS(conf)
 	opts = append(opts, grpc.WithTransportCredentials(insecureCreds))
 	addr := n.config.ListenControlAPI
 	opts = append(opts, grpc.WithDialer(

@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/docker/go-connections/tlsconfig"
+
 	"github.com/cloudflare/cfssl/helpers"
 	"github.com/docker/swarmkit/api"
 	"github.com/docker/swarmkit/ca"
@@ -131,13 +133,15 @@ func validateHasAtLeastOneExternalCA(ctx context.Context, externalCAs map[string
 		pool := x509.NewCertPool()
 		pool.AppendCertsFromPEM(wantedCert)
 		dialer := net.Dialer{Timeout: 5 * time.Second}
-		opts := tls.Config{
-			RootCAs:      pool,
-			Certificates: securityConfig.ClientTLSCreds.Config().Certificates,
-		}
+		// we want to make sure we can connect to it with a strict client, since we do not want
+		// the server connecting to an external CA over weak TLS protocols
+		opts := tlsconfig.ClientDefault()
+		opts.RootCAs = pool
+		opts.Certificates = securityConfig.ClientTLSCreds.Config().Certificates
+
 		for i, ca := range specific {
 			if ca.Protocol == api.ExternalCA_CAProtocolCFSSL {
-				if err := validateExternalCAURL(&dialer, &opts, ca.URL); err != nil {
+				if err := validateExternalCAURL(&dialer, opts, ca.URL); err != nil {
 					log.G(ctx).WithError(err).Warnf("external CA # %d is unreachable or invalid", i+1)
 				} else {
 					return specific, nil

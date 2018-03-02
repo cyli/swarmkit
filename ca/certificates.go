@@ -18,6 +18,8 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/docker/go-connections/tlsconfig"
+
 	cfcsr "github.com/cloudflare/cfssl/csr"
 	"github.com/cloudflare/cfssl/helpers"
 	"github.com/cloudflare/cfssl/initca"
@@ -349,7 +351,10 @@ func (rca *RootCA) getKEKUpdate(ctx context.Context, leafCert *x509.Certificate,
 	}
 
 	if managerRole {
-		mtlsCreds := credentials.NewTLS(&tls.Config{ServerName: CARole, RootCAs: rca.Pool, Certificates: []tls.Certificate{keypair}})
+		// the only error returned by `NewClientTLSConfig` is if the root pool is nil,
+		// which it can't be in this case
+		conf, _ := NewClientTLSConfig([]tls.Certificate{keypair}, rca.Pool, CARole)
+		mtlsCreds := credentials.NewTLS(conf)
 		conn, err := getGRPCConnection(mtlsCreds, config.ConnBroker, config.ForceRemote)
 		if err != nil {
 			return nil, err
@@ -761,8 +766,12 @@ func getGRPCConnection(creds credentials.TransportCredentials, connBroker *conne
 // GetRemoteCA returns the remote endpoint's CA certificate bundle
 func GetRemoteCA(ctx context.Context, d digest.Digest, connBroker *connectionbroker.Broker) (RootCA, error) {
 	// This TLS Config is intentionally using InsecureSkipVerify. We use the
-	// digest instead to check the integrity of the CA certificate.
-	insecureCreds := credentials.NewTLS(&tls.Config{InsecureSkipVerify: true})
+	// digest instead to check the integrity of the CA certificate.  This, and
+	// GetRemoteSignedCertificates when we bootstrap our TLS certs are the only
+	// two non-MTLS calls.
+	conf := tlsconfig.ClientDefault()
+	conf.InsecureSkipVerify = true
+	insecureCreds := credentials.NewTLS(conf)
 	conn, err := getGRPCConnection(insecureCreds, connBroker, false)
 	if err != nil {
 		return RootCA{}, err
@@ -836,15 +845,18 @@ func CreateRootCA(rootCN string) (RootCA, error) {
 // GetRemoteSignedCertificate submits a CSR to a remote CA server address,
 // and that is part of a CA identified by a specific certificate pool.
 func GetRemoteSignedCertificate(ctx context.Context, csr []byte, rootCAPool *x509.CertPool, config CertificateRequestConfig) ([]byte, error) {
-	if rootCAPool == nil {
-		return nil, errors.New("valid root CA pool required")
-	}
 	creds := config.Credentials
 
 	if creds == nil {
-		// This is our only non-MTLS request, and it happens when we are boostraping our TLS certs
-		// We're using CARole as server name, so an external CA doesn't also have to have ManagerRole in the cert SANs
-		creds = credentials.NewTLS(&tls.Config{ServerName: CARole, RootCAs: rootCAPool})
+		// This, and downloading the remote CA for the first time, are our only non-MTLS requests,
+		// and it happens when we are bootstrapping our TLS certs.
+		// We're using CARole as server name, so an external CA doesn't also have to have ManagerRole
+		// in the cert SANs
+		conf, err := NewClientTLSConfig(nil, rootCAPool, CARole)
+		if err != nil {
+			return nil, err
+		}
+		creds = credentials.NewTLS(conf)
 	}
 
 	conn, err := getGRPCConnection(creds, config.ConnBroker, config.ForceRemote)
