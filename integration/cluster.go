@@ -90,11 +90,11 @@ func (c *testCluster) RandomManager() *testNode {
 // an agent and a manager. If lateBind is set, the manager is started before a
 // remote API port is bound. If rootCA is set, the manager is bootstrapped using
 // said root CA.  These settings only apply to the first manager.
-func (c *testCluster) AddManager(lateBind bool, rootCA *ca.RootCA) error {
+func (c *testCluster) AddManager(lateBind bool, rootCA *ca.RootCA, fips bool) error {
 	// first node
 	var n *testNode
 	if len(c.nodes) == 0 {
-		node, err := newTestNode("", "", lateBind, c.fips)
+		node, err := newTestNode("", "", lateBind, fips)
 		if err != nil {
 			return err
 		}
@@ -115,7 +115,7 @@ func (c *testCluster) AddManager(lateBind bool, rootCA *ca.RootCA) error {
 		if err != nil {
 			return err
 		}
-		node, err := newTestNode(joinAddr, clusterInfo.RootCA.JoinTokens.Manager, false, c.fips)
+		node, err := newTestNode(joinAddr, clusterInfo.RootCA.JoinTokens.Manager, false, fips)
 		if err != nil {
 			return err
 		}
@@ -157,7 +157,7 @@ func (c *testCluster) AddManager(lateBind bool, rootCA *ca.RootCA) error {
 }
 
 // AddAgent adds node with Agent role(doesn't participate in raft cluster).
-func (c *testCluster) AddAgent() error {
+func (c *testCluster) AddAgent(fips bool) error {
 	// first node
 	var n *testNode
 	if len(c.nodes) == 0 {
@@ -171,7 +171,7 @@ func (c *testCluster) AddAgent() error {
 	if err != nil {
 		return err
 	}
-	node, err := newTestNode(joinAddr, clusterInfo.RootCA.JoinTokens.Worker, false, c.fips)
+	node, err := newTestNode(joinAddr, clusterInfo.RootCA.JoinTokens.Worker, false, fips)
 	if err != nil {
 		return err
 	}

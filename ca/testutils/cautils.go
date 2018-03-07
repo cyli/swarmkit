@@ -369,10 +369,10 @@ func createClusterObject(t *testing.T, s *store.MemoryStore, clusterID string, a
 		RootCA: apiRootCA,
 	}
 	if cluster.RootCA.JoinTokens.Worker == "" {
-		cluster.RootCA.JoinTokens.Worker = ca.GenerateJoinToken(caRootCA)
+		cluster.RootCA.JoinTokens.Worker = ca.GenerateJoinToken(caRootCA, false)
 	}
 	if cluster.RootCA.JoinTokens.Manager == "" {
-		cluster.RootCA.JoinTokens.Manager = ca.GenerateJoinToken(caRootCA)
+		cluster.RootCA.JoinTokens.Manager = ca.GenerateJoinToken(caRootCA, false)
 	}
 	assert.NoError(t, s.Update(func(tx store.Tx) error {
 		store.CreateCluster(tx, cluster)

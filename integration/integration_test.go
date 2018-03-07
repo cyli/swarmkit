@@ -156,10 +156,10 @@ func pollServiceReady(t *testing.T, c *testCluster, sid string, replicas int) {
 func newCluster(t *testing.T, numWorker, numManager int) *testCluster {
 	cl := newTestCluster(t.Name(), false)
 	for i := 0; i < numManager; i++ {
-		require.NoError(t, cl.AddManager(false, nil), "manager number %d", i+1)
+		require.NoError(t, cl.AddManager(false, nil, false), "manager number %d", i+1)
 	}
 	for i := 0; i < numWorker; i++ {
-		require.NoError(t, cl.AddAgent(), "agent number %d", i+1)
+		require.NoError(t, cl.AddAgent(false), "agent number %d", i+1)
 	}
 
 	pollClusterReady(t, cl, numWorker, numManager)
@@ -169,10 +169,10 @@ func newCluster(t *testing.T, numWorker, numManager int) *testCluster {
 func newClusterWithRootCA(t *testing.T, numWorker, numManager int, rootCA *ca.RootCA) *testCluster {
 	cl := newTestCluster(t.Name(), false)
 	for i := 0; i < numManager; i++ {
-		require.NoError(t, cl.AddManager(false, rootCA), "manager number %d", i+1)
+		require.NoError(t, cl.AddManager(false, rootCA, false), "manager number %d", i+1)
 	}
 	for i := 0; i < numWorker; i++ {
-		require.NoError(t, cl.AddAgent(), "agent number %d", i+1)
+		require.NoError(t, cl.AddAgent(false), "agent number %d", i+1)
 	}
 
 	pollClusterReady(t, cl, numWorker, numManager)
@@ -196,10 +196,10 @@ func TestServiceCreateLateBind(t *testing.T) {
 
 	cl := newTestCluster(t.Name(), false)
 	for i := 0; i < numManager; i++ {
-		require.NoError(t, cl.AddManager(true, nil), "manager number %d", i+1)
+		require.NoError(t, cl.AddManager(true, nil, false), "manager number %d", i+1)
 	}
 	for i := 0; i < numWorker; i++ {
-		require.NoError(t, cl.AddAgent(), "agent number %d", i+1)
+		require.NoError(t, cl.AddAgent(false), "agent number %d", i+1)
 	}
 
 	defer func() {
@@ -555,7 +555,7 @@ func TestForceNewCluster(t *testing.T) {
 	defer func() {
 		require.NoError(t, cl.Stop())
 	}()
-	require.NoError(t, cl.AddManager(false, &rootCA), "manager number 1")
+	require.NoError(t, cl.AddManager(false, &rootCA, false), "manager number 1")
 	pollClusterReady(t, cl, numWorker, numManager)
 
 	leader, err := cl.Leader()
@@ -696,7 +696,7 @@ func TestSuccessfulRootRotation(t *testing.T) {
 		require.NoError(t, cl.StartNode(downManagerID))
 		require.NoError(t, cl.StartNode(downWorkerIDs[0]))
 		require.NoError(t, cl.RemoveNode(downWorkerIDs[1], false))
-		require.NoError(t, cl.AddAgent())
+		require.NoError(t, cl.AddAgent(false))
 
 		// we can finish root rotation even though the previous leader was down because it had
 		// already rotated its cert
@@ -880,8 +880,8 @@ func TestFIPSEnabledCluster(t *testing.T) {
 
 	numWorker, numManager := 1, 1
 	cl := newTestCluster(t.Name(), true)
-	require.NoError(t, cl.AddManager(true, nil))
-	require.NoError(t, cl.AddAgent())
+	require.NoError(t, cl.AddManager(true, nil, true))
+	require.NoError(t, cl.AddAgent(true))
 	defer func() {
 		require.NoError(t, cl.Stop())
 	}()
@@ -905,6 +905,7 @@ func TestFIPSEnabledCluster(t *testing.T) {
 	err = cl.StartNode(nodeID)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "did not ready in time")
+	require.NoError(t, worker.Pause(false))
 
 	// in FIPS mode, it can reconnect
 	require.NoError(t, worker.Pause(false))
@@ -932,5 +933,12 @@ func TestFIPSEnabledCluster(t *testing.T) {
 	require.NoError(t, cl.StartNode(nodeID))
 	pollClusterReady(t, cl, numWorker, numManager)
 
-	// TODO: try to join a non-FIPS manager and a non-FIPS worker - they will fail
+	// try to join a non-FIPS manager and a non-FIPS worker - they will fail
+	err = cl.AddManager(true, nil, false)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "FIPS")
+
+	err = cl.AddAgent(false)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "FIPS")
 }
