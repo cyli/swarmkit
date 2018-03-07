@@ -217,6 +217,89 @@ func TestManager(t *testing.T) {
 	<-done
 }
 
+// Even if the manager can decrypt the raft logs, it will shut down if it is not FIPS
+// enabled but the cluster requires FIPS compliance.
+func TestManagerWillNotStartIfNotInFIPSCompliance(t *testing.T) {
+	temp, err := ioutil.TempFile("", "test-manager-FIPS")
+	require.NoError(t, err)
+	require.NoError(t, temp.Close())
+	require.NoError(t, os.Remove(temp.Name()))
+
+	defer os.RemoveAll(temp.Name())
+
+	stateDir, err := ioutil.TempDir("", "test-raft-FIPS")
+	require.NoError(t, err)
+	defer os.RemoveAll(stateDir)
+
+	tc := cautils.NewTestCA(t, func(p ca.CertPaths) *ca.KeyReadWriter {
+		return ca.NewKeyReadWriter(p, []byte("kek"), nil)
+	})
+	defer tc.Stop()
+
+	managerSecurityConfig, err := tc.NewNodeConfig(ca.ManagerRole)
+	require.NoError(t, err)
+
+	config := Config{
+		RemoteAPI:        &RemoteAddrs{ListenAddr: "127.0.0.1:0"},
+		ControlAPI:       temp.Name(),
+		StateDir:         stateDir,
+		SecurityConfig:   managerSecurityConfig,
+		AutoLockManagers: true,
+		UnlockKey:        []byte("kek"),
+		RootCAPaths:      tc.Paths.RootCA,
+		FIPS:             true,
+	}
+
+	m, err := New(&config)
+	require.NoError(t, err)
+	require.NotNil(t, m)
+
+	done := make(chan error)
+	defer close(done)
+	go func() {
+		done <- m.Run(tc.Context)
+	}()
+
+	// also make sure that the FIPS requirement is passed to the dispatcher
+	agentSecurityConfig, err := tc.NewNodeConfig(ca.WorkerRole)
+	require.NoError(t, err)
+	opts := []grpc.DialOption{
+		grpc.WithTimeout(10 * time.Second),
+		grpc.WithTransportCredentials(agentSecurityConfig.ClientTLSCreds),
+	}
+	conn, err := grpc.Dial(m.Addr(), opts...)
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, conn.Close())
+	}()
+	client := api.NewDispatcherClient(conn)
+	sess, err := client.Session(tc.Context, &api.SessionRequest{})
+	require.NoError(t, err)
+	_, err = sess.Recv()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "FIPS")
+
+	m.Stop(tc.Context, false)
+	<-done
+
+	config.FIPS = false
+	m, err = New(&config)
+	require.NoError(t, err)
+	require.NotNil(t, m)
+
+	go func() {
+		done <- m.Run(tc.Context)
+	}()
+	defer m.Stop(tc.Context, false)
+	// the manager should stop itself
+	select {
+	case err := <-done:
+		require.Equal(t, dispatcher.ErrNotFIPSCompliant, err)
+	case <-time.After(3 * time.Second):
+		require.FailNow(t, "manager did not error even after cluster should have been loaded")
+	}
+}
+
 // Tests locking and unlocking the manager and key rotations
 func TestManagerLockUnlock(t *testing.T) {
 	temp, err := ioutil.TempFile("", "test-manager-lock")

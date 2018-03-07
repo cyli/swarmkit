@@ -123,6 +123,19 @@ type Config struct {
 
 	// PluginGetter provides access to docker's plugin inventory.
 	PluginGetter plugingetter.PluginGetter
+
+	// FIPS is a boolean to indicate whether the manager is FIPS-enabled.
+	// It applicable:
+	//   1. When bootstrapping a cluster for the first time - it will set the cluster
+	//      setting, which should never be changed.
+	//   2. When loading data from disk.  If FIPS is not enabled, and the raft
+	//      cluster on disk is supposed to be FIPS enabled, it will fail to load.
+	//      This should not happen anyway, since if FIPS is not enabled we do not
+	//      enable fernet decryption, so the manager should just not be able to
+	//      start up.  However, there is no real reason that a non-FIPS enabled
+	//      server should not be able to use fernet encryption/decryption, so
+	//      this is provided for defense in depth.
+	FIPS bool
 }
 
 // Manager is the cluster manager for Swarm.
@@ -234,10 +247,13 @@ func New(config *Config) (*Manager, error) {
 		grpc.MaxMsgSize(transport.GRPCMaxMsgSize),
 	}
 
+	dispatcherConfig := dispatcher.DefaultConfig()
+	dispatcherConfig.FIPS = config.FIPS
+
 	m := &Manager{
 		config:          *config,
 		caserver:        ca.NewServer(raftNode.MemoryStore(), config.SecurityConfig),
-		dispatcher:      dispatcher.New(raftNode, dispatcher.DefaultConfig(), drivers.New(config.PluginGetter), config.SecurityConfig),
+		dispatcher:      dispatcher.New(raftNode, dispatcherConfig, drivers.New(config.PluginGetter), config.SecurityConfig),
 		logbroker:       logbroker.New(raftNode.MemoryStore()),
 		watchServer:     watchapi.NewServer(raftNode.MemoryStore()),
 		server:          grpc.NewServer(opts...),
@@ -558,6 +574,12 @@ func (m *Manager) Run(parent context.Context) error {
 	if err != nil {
 		return err
 	}
+	// If the cluster is FIPS-enabled and this manager is not, stop running.  This manager
+	// should only run in FIPS-mode.
+	if c.FIPS && !m.config.FIPS {
+		return dispatcher.ErrNotFIPSCompliant
+	}
+
 	raftConfig := c.Spec.Raft
 
 	if err := m.watchForClusterChanges(ctx); err != nil {
@@ -957,7 +979,8 @@ func (m *Manager) becomeLeader(ctx context.Context) {
 			raftCfg,
 			api.EncryptionConfig{AutoLockManagers: m.config.AutoLockManagers},
 			unlockKeys,
-			rootCA))
+			rootCA,
+			m.config.FIPS))
 
 		if err != nil && err != store.ErrExist {
 			log.G(ctx).WithError(err).Errorf("error creating cluster object")
@@ -1124,7 +1147,7 @@ func defaultClusterObject(
 	raftCfg api.RaftConfig,
 	encryptionConfig api.EncryptionConfig,
 	initialUnlockKeys []*api.EncryptionKey,
-	rootCA *ca.RootCA) *api.Cluster {
+	rootCA *ca.RootCA, fips bool) *api.Cluster {
 	var caKey []byte
 	if rcaSigner, err := rootCA.Signer(); err == nil {
 		caKey = rcaSigner.Key
@@ -1156,6 +1179,7 @@ func defaultClusterObject(
 			},
 		},
 		UnlockKeys: initialUnlockKeys,
+		FIPS:       fips,
 	}
 }
 

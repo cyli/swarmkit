@@ -154,7 +154,7 @@ func pollServiceReady(t *testing.T, c *testCluster, sid string, replicas int) {
 }
 
 func newCluster(t *testing.T, numWorker, numManager int) *testCluster {
-	cl := newTestCluster(t.Name())
+	cl := newTestCluster(t.Name(), false)
 	for i := 0; i < numManager; i++ {
 		require.NoError(t, cl.AddManager(false, nil), "manager number %d", i+1)
 	}
@@ -167,7 +167,7 @@ func newCluster(t *testing.T, numWorker, numManager int) *testCluster {
 }
 
 func newClusterWithRootCA(t *testing.T, numWorker, numManager int, rootCA *ca.RootCA) *testCluster {
-	cl := newTestCluster(t.Name())
+	cl := newTestCluster(t.Name(), false)
 	for i := 0; i < numManager; i++ {
 		require.NoError(t, cl.AddManager(false, rootCA), "manager number %d", i+1)
 	}
@@ -194,7 +194,7 @@ func TestServiceCreateLateBind(t *testing.T) {
 
 	numWorker, numManager := 3, 3
 
-	cl := newTestCluster(t.Name())
+	cl := newTestCluster(t.Name(), false)
 	for i := 0; i < numManager; i++ {
 		require.NoError(t, cl.AddManager(true, nil), "manager number %d", i+1)
 	}
@@ -551,7 +551,7 @@ func TestForceNewCluster(t *testing.T) {
 
 	// start a new cluster with the external CA bootstrapped
 	numWorker, numManager := 0, 1
-	cl := newTestCluster(t.Name())
+	cl := newTestCluster(t.Name(), false)
 	defer func() {
 		require.NoError(t, cl.Stop())
 	}()
@@ -858,7 +858,7 @@ func TestNodeJoinWithWrongCerts(t *testing.T) {
 	require.NoError(t, err)
 
 	for role, token := range tokens {
-		node, err := newTestNode(joinAddr, token, false)
+		node, err := newTestNode(joinAddr, token, false, false)
 		require.NoError(t, err)
 		nodeID := identity.NewID()
 		require.NoError(t,
@@ -871,4 +871,66 @@ func TestNodeJoinWithWrongCerts(t *testing.T) {
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "certificate signed by unknown authority")
 	}
+}
+
+// If FIPS is enabled, only FIPS-enabled nodes will be able to join and rejoin
+// the cluster.  If a manager node restarts in non-FIPS mode, it will shut down.
+func TestFIPSEnabledCluster(t *testing.T) {
+	t.Parallel()
+
+	numWorker, numManager := 1, 1
+	cl := newTestCluster(t.Name(), true)
+	require.NoError(t, cl.AddManager(true, nil))
+	require.NoError(t, cl.AddAgent())
+	defer func() {
+		require.NoError(t, cl.Stop())
+	}()
+	pollClusterReady(t, cl, numWorker, numManager)
+
+	manager, err := cl.Leader()
+	require.NoError(t, err)
+	var worker *testNode
+	for _, n := range cl.nodes {
+		if !n.IsManager() {
+			worker = n
+			break
+		}
+	}
+
+	// restart agent in non-FIPS mode - it won't be able to connect, so the node should not
+	// be ready in time
+	nodeID := worker.node.NodeID()
+	require.NoError(t, worker.Pause(false))
+	worker.config.FIPS = false
+	err = cl.StartNode(nodeID)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "did not ready in time")
+
+	// in FIPS mode, it can reconnect
+	require.NoError(t, worker.Pause(false))
+	worker.config.FIPS = true
+	require.NoError(t, cl.StartNode(nodeID))
+
+	// restart manager in non-FIPS mode - it won't be able to restart
+	nodeID = manager.node.NodeID()
+	// make sure we save the address, because pause calls this command to save
+	// the address and create a new node, and if the manager isn't running
+	// because it shut down due to FIPS issues, when it starts again it will
+	// start with a random address, and the worker won't be able to connect to it
+	mAddr, err := manager.node.RemoteAPIAddr()
+	require.NoError(t, err)
+	require.NoError(t, manager.Pause(false))
+	manager.config.FIPS = false
+	err = cl.StartNode(nodeID)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "FIPS")
+
+	// in FIPS mode, it can start and the cluster will be healthy again
+	require.NoError(t, manager.Pause(false))
+	manager.config.FIPS = true
+	manager.config.ListenRemoteAPI = mAddr
+	require.NoError(t, cl.StartNode(nodeID))
+	pollClusterReady(t, cl, numWorker, numManager)
+
+	// TODO: try to join a non-FIPS manager and a non-FIPS worker - they will fail
 }
