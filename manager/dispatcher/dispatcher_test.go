@@ -2047,6 +2047,79 @@ func TestClusterUpdatesSendMessages(t *testing.T) {
 	}
 }
 
+// If our cluster is FIPS compliant, reject non-FIPS compliant nodes, even if the node
+// has a registered session.  Otherwise, it doesn't matter if the agent is compliant or not.
+
+func TestRejectNonFIPSCompliantSessions(t *testing.T) {
+	t.Parallel()
+
+	gd, err := startDispatcher(DefaultConfig())
+	assert.NoError(t, err)
+	defer gd.Close()
+
+	registerSession := func(fips bool, sessionID string) (api.Dispatcher_SessionClient, error) {
+		var desc *api.NodeDescription
+		if fips {
+			desc = &api.NodeDescription{FIPS: true}
+		}
+		return gd.Clients[0].Session(context.Background(), &api.SessionRequest{
+			Description: desc,
+			SessionID:   sessionID,
+		})
+	}
+
+	assertSuccessfulSession := func(s api.Dispatcher_SessionClient) (string, string) {
+		defer s.CloseSend()
+		resp, err := s.Recv()
+		require.NoError(t, err)
+		require.NotEmpty(t, resp.SessionID)
+		require.NotEmpty(t, resp.Node.ID)
+		return resp.SessionID, resp.Node.ID
+	}
+
+	// First session, no FIPS compliance, success because the cluster is not FIPS compliant
+	s, err := registerSession(false, "")
+	require.NoError(t, err)
+	sessionID, nodeID := assertSuccessfulSession(s)
+
+	// Second session, FIPS compliance, success because the cluster is not FIPS compliant
+	s, err = registerSession(true, sessionID)
+	require.NoError(t, err)
+	sID, nID := assertSuccessfulSession(s)
+	require.Equal(t, sessionID, sID)
+	require.Equal(t, nodeID, nID)
+
+	// Update cluster to be FIPS compliant
+	require.NoError(t, gd.Store.Update(func(tx store.Tx) error {
+		cluster := store.GetCluster(tx, gd.SecurityConfigs[0].ClientTLSCreds.Organization())
+		cluster.FIPS = true
+		return store.UpdateCluster(tx, cluster)
+	}))
+
+	// wait until the cluster updates so the session is rejected
+	var rejectErr error
+	require.NoError(t, testutils.PollFuncWithTimeout(nil, func() error {
+		s, err := registerSession(false, sessionID)
+		if err != nil {
+			return err
+		}
+		defer s.CloseSend()
+		_, rejectErr = s.Recv()
+		if rejectErr == nil {
+			return errors.New("dispatcher did not reject FIPS-noncompliant agent")
+		}
+		return nil
+	}, 3*time.Second))
+	require.Contains(t, rejectErr.Error(), "FIPS")
+
+	// connecting FIPS-enabled agent succeed
+	s, err = registerSession(true, sessionID)
+	require.NoError(t, err)
+	sID, nID = assertSuccessfulSession(s)
+	require.Equal(t, sessionID, sID)
+	require.Equal(t, nodeID, nID)
+}
+
 // mockPluginGetter enables mocking the server plugin getter with customized plugins
 type mockPluginGetter struct {
 	addr   string

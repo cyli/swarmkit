@@ -66,6 +66,8 @@ var (
 	ErrSessionInvalid = errors.New("session invalid")
 	// ErrNodeNotFound returned when the Node doesn't exist in raft.
 	ErrNodeNotFound = errors.New("node not found")
+	// ErrNotFIPSCompliant returned when the cluster is FIPS-enabled but a node is not
+	ErrNotFIPSCompliant = errors.New("node is not FIPS-enabled but cluster requires FIPS")
 
 	// Scheduling delay timer.
 	schedulingDelayTimer metrics.Timer
@@ -87,6 +89,9 @@ type Config struct {
 	// new session.
 	RateLimitPeriod       time.Duration
 	GracePeriodMultiplier int
+	// FIPS specifies whether the cluster is in FIPS mode, and if so, non-FIPS
+	// nodes should not be able to register
+	FIPS bool
 }
 
 // DefaultConfig returns default config for Dispatcher.
@@ -230,7 +235,7 @@ func (d *Dispatcher) Run(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			if err == nil && len(clusters) == 1 {
+			if len(clusters) == 1 {
 				heartbeatPeriod, err := gogotypes.DurationFromProto(clusters[0].Spec.Dispatcher.HeartbeatPeriod)
 				if err == nil && heartbeatPeriod > 0 {
 					d.config.HeartbeatPeriod = heartbeatPeriod
@@ -239,6 +244,7 @@ func (d *Dispatcher) Run(ctx context.Context) error {
 					d.networkBootstrapKeys = clusters[0].NetworkBootstrapKeys
 				}
 				d.lastSeenRootCert = clusters[0].RootCA.CACert
+				d.config.FIPS = clusters[0].FIPS
 			}
 			return nil
 		},
@@ -303,6 +309,20 @@ func (d *Dispatcher) Run(ctx context.Context) error {
 			}
 			d.lastSeenRootCert = cluster.Cluster.RootCA.CACert
 			d.networkBootstrapKeys = cluster.Cluster.NetworkBootstrapKeys
+			// NOTE (cyli) - we do not have to check already-connected sessions to boot
+			// non-FIPS compliant agents, because of two assumptions:
+			//  (1) We do not allow the cluster value to be changed via API, so once set
+			//      this value should not change
+			//  (2) The manager correctly passes the FIPS value to the dispatcher.
+			//      - If the manager is FIPS enabled, and the cluster isn't, then the
+			//        dispatcher may reject a few nodes connections until it can load up
+			//        the cluster object in the store, but then it will allow connections.
+			//      - If the manager is not FIPS enabled, but the cluster is, once the
+			//        manager loads up the cluster object it will shut itself down, thus
+			//        disconnecting all connected agents anyway.
+			// If any of these assumptions change, we may possibly have to check for and
+			// eject any non-FIPS compliant established sessions.
+			d.config.FIPS = cluster.Cluster.FIPS
 			d.mu.Unlock()
 			d.clusterUpdateQueue.Publish(clusterUpdate{
 				bootstrapKeyUpdate: &cluster.Cluster.NetworkBootstrapKeys,
@@ -1172,6 +1192,14 @@ func (d *Dispatcher) getRootCACert() []byte {
 	return d.lastSeenRootCert
 }
 
+func (d *Dispatcher) isFIPSCompliant(n *api.NodeDescription) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	// if this is a non-FIPS cluster, it won't prevent a FIPS node from joining - it's
+	// up to the node to avoid joining a non-FIPS cluster
+	return !d.config.FIPS || (n != nil && n.FIPS)
+}
+
 // Session is a stream which controls agent connection.
 // Each message contains list of backup Managers with weights. Also there is
 // a special boolean field Disconnect which if true indicates that node should
@@ -1183,6 +1211,14 @@ func (d *Dispatcher) Session(r *api.SessionRequest, stream api.Dispatcher_Sessio
 	dctx, err := d.isRunningLocked()
 	if err != nil {
 		return err
+	}
+
+	// If the node does not report itself as FIPS compliant, prevent it from establishing a
+	// session.  There is no way to verify actual FIPS compliance or prevent misbehaving
+	// clients from falsely reporting compliance, but this acts as a nicety to prevent a user
+	// from accidentally forgetting to enable FIPS on the restart of a node.
+	if !d.isFIPSCompliant(r.Description) {
+		return ErrNotFIPSCompliant
 	}
 
 	ctx := stream.Context()
