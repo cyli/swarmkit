@@ -70,23 +70,42 @@ func TestDownloadRootCAWrongCAHash(t *testing.T) {
 	// invalid token
 	for _, invalid := range []string{
 		"invalidtoken", // completely invalid
-		"SWMTKN-1-3wkodtpeoipd1u1hi0ykdcdwhw16dk73ulqqtn14b3indz68rf-4myj5xihyto11dg1cn55w8p6", // mistyped
+		"SWMTKN-1-3wkodtpeoipd1u1hi0ykdcdwhw16dk73ulqqtn14b3indz68rf-4myj5xihyto11dg1cn55w8p6",  // mistyped
+		"SWMTKN-2-1fhvpatk6ms36i3uc64tsv1ybyuxkb899zbjpq4ib64qwbibz4-1g3as27iwmko5yqh1byv868hx", // version 2 should have 5 tokens
+		"SWMTKN-0-1fhvpatk6ms36i3uc64tsv1ybyuxkb899zbjpq4ib64qwbibz4-1g3as27iwmko5yqh1byv868hx", // invalid version
 	} {
 		_, err := ca.DownloadRootCA(tc.Context, tc.Paths.RootCA, invalid, tc.ConnBroker)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "invalid join token")
 	}
 
-	// invalid hash token
-	splitToken := strings.Split(tc.ManagerToken, "-")
-	splitToken[2] = "1kxftv4ofnc6mt30lmgipg6ngf9luhwqopfk1tz6bdmnkubg0e"
-	replacementToken := strings.Join(splitToken, "-")
+	// invalid hash token - can get the wrong hash from both version 1 and version 2
+	for _, wrongToken := range []string{
+		"SWMTKN-1-1kxftv4ofnc6mt30lmgipg6ngf9luhwqopfk1tz6bdmnkubg0e-4myj5xihyto11dg1cn55w8p61",
+		"SWMTKN-2-0-1kxftv4ofnc6mt30lmgipg6ngf9luhwqopfk1tz6bdmnkubg0e-4myj5xihyto11dg1cn55w8p61",
+	} {
+		_, err := ca.DownloadRootCA(tc.Context, tc.Paths.RootCA, wrongToken, tc.ConnBroker)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "remote CA does not match fingerprint.")
+	}
+}
 
+// If joining an older cluster that produces earlier version join tokens, we can still download
+// the root CA
+func TestDownloadRootCAOldJoinTokens(t *testing.T) {
+	tc := cautils.NewTestCA(t)
+	defer tc.Stop()
+
+	tokenParts := strings.Split(tc.ManagerToken, "-")
+	rootDigest := tokenParts[3] // because we are on version 2 now, so SWMTKN-2-<fips>-<digest>-<secret>
+	secret := tokenParts[4]
+	v1 := fmt.Sprintf("SWMTKN-1-%s-%s", rootDigest, secret)
+
+	// Remove the CA cert
 	os.RemoveAll(tc.Paths.RootCA.Cert)
-
-	_, err := ca.DownloadRootCA(tc.Context, tc.Paths.RootCA, replacementToken, tc.ConnBroker)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "remote CA does not match fingerprint.")
+	rootCA, err := ca.DownloadRootCA(tc.Context, tc.Paths.RootCA, v1, tc.ConnBroker)
+	require.NoError(t, err)
+	require.Equal(t, tc.RootCA.Certs, rootCA.Certs)
 }
 
 func TestCreateSecurityConfigEmptyDir(t *testing.T) {

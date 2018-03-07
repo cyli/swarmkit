@@ -55,6 +55,8 @@ var (
 	// GetCertRetryInterval is how long to wait before retrying a node
 	// certificate or root certificate request.
 	GetCertRetryInterval = 2 * time.Second
+
+	errInvalidJoinToken = errors.New("invalid join token")
 )
 
 // SecurityConfig is used to represent a node's security configuration. It includes information about
@@ -85,6 +87,68 @@ type SecurityConfig struct {
 type CertificateUpdate struct {
 	Role string
 	Err  error
+}
+
+// ParsedJoinToken is the data from a join token, once parsed
+type ParsedJoinToken struct {
+	Version    int
+	RootDigest digest.Digest
+	Secret     string
+	FIPS       bool
+}
+
+// ParseJoinToken parses a join token.  Current format is v2.
+// v1: SWMTKN-1-<SHA256 digest of root CA cert in base 36, 0-left-padded to 50 chars>-<16-byte secret in base 36 0-left-padded to 25 chars>
+// v2: SWMTKN-2-<0/1 whether its FIPS or not>-<same rest of data as v1>
+func ParseJoinToken(token string) (*ParsedJoinToken, error) {
+	split := strings.Split(token, "-")
+	numParts := len(split)
+
+	// v1 has 4, v2 has 5
+	if numParts < 4 || split[0] != "SWMTKN" {
+		return nil, errInvalidJoinToken
+	}
+
+	var (
+		version int
+		fips    bool
+	)
+
+	switch split[1] {
+	case "1":
+		if numParts != 4 {
+			return nil, errInvalidJoinToken
+		}
+		version = 1
+	case "2":
+		if numParts != 5 || (split[2] != "0" && split[2] != "1") {
+			return nil, errInvalidJoinToken
+		}
+		version = 2
+		fips = split[2] == "1"
+	default:
+		return nil, errInvalidJoinToken
+	}
+
+	secret := split[numParts-1]
+	rootDigest := split[numParts-2]
+	if len(rootDigest) != base36DigestLen || len(secret) != maxGeneratedSecretLength {
+		return nil, errInvalidJoinToken
+	}
+
+	var digestInt big.Int
+	digestInt.SetString(rootDigest, joinTokenBase)
+
+	d, err := digest.Parse(fmt.Sprintf("sha256:%0[1]*s", 64, digestInt.Text(16)))
+	if err != nil {
+		return nil, err
+	}
+	return &ParsedJoinToken{
+		Version:    version,
+		RootDigest: d,
+		Secret:     secret,
+		FIPS:       fips,
+	}, nil
 }
 
 func validateRootCAAndTLSCert(rootCA *RootCA, tlsKeyPair *tls.Certificate) error {
@@ -276,29 +340,24 @@ func NewConfigPaths(baseCertDir string) *SecurityConfigPaths {
 }
 
 // GenerateJoinToken creates a new join token.
-func GenerateJoinToken(rootCA *RootCA) string {
+func GenerateJoinToken(rootCA *RootCA, fips bool) string {
 	var secretBytes [generatedSecretEntropyBytes]byte
 
 	if _, err := cryptorand.Read(secretBytes[:]); err != nil {
 		panic(fmt.Errorf("failed to read random bytes: %v", err))
 	}
 
-	var nn, digest big.Int
+	var (
+		nn, digest big.Int
+		fipsOrNot  int
+	)
 	nn.SetBytes(secretBytes[:])
 	digest.SetString(rootCA.Digest.Hex(), 16)
-	return fmt.Sprintf("SWMTKN-1-%0[1]*s-%0[3]*s", base36DigestLen, digest.Text(joinTokenBase), maxGeneratedSecretLength, nn.Text(joinTokenBase))
-}
-
-func getCAHashFromToken(token string) (digest.Digest, error) {
-	split := strings.Split(token, "-")
-	if len(split) != 4 || split[0] != "SWMTKN" || split[1] != "1" || len(split[2]) != base36DigestLen || len(split[3]) != maxGeneratedSecretLength {
-		return "", errors.New("invalid join token")
+	if fips {
+		fipsOrNot = 1
 	}
-
-	var digestInt big.Int
-	digestInt.SetString(split[2], joinTokenBase)
-
-	return digest.Parse(fmt.Sprintf("sha256:%0[1]*s", 64, digestInt.Text(16)))
+	return fmt.Sprintf("SWMTKN-2-%d-%0[2]*s-%0[4]*s", fipsOrNot, base36DigestLen,
+		digest.Text(joinTokenBase), maxGeneratedSecretLength, nn.Text(joinTokenBase))
 }
 
 // DownloadRootCA tries to retrieve a remote root CA and matches the digest against the provided token.
@@ -312,10 +371,11 @@ func DownloadRootCA(ctx context.Context, paths CertPaths, token string, connBrok
 		err error
 	)
 	if token != "" {
-		d, err = getCAHashFromToken(token)
+		parsed, err := ParseJoinToken(token)
 		if err != nil {
 			return RootCA{}, err
 		}
+		d = parsed.RootDigest
 	}
 	// Get the remote CA certificate, verify integrity with the
 	// hash provided. Retry up to 5 times, in case the manager we

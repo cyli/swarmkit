@@ -17,6 +17,7 @@ import (
 	"github.com/docker/swarmkit/identity"
 
 	"github.com/docker/swarmkit/ca/keyutils"
+	"github.com/docker/swarmkit/manager/dispatcher"
 
 	"github.com/boltdb/bolt"
 	"github.com/docker/docker/pkg/plugingetter"
@@ -768,6 +769,19 @@ func generateFIPSClusterID() string {
 	return "FIPS." + identity.NewID()
 }
 
+func (n *Node) checkJoinTokenForFIPS() error {
+	parsedToken, err := ca.ParseJoinToken(n.config.JoinToken)
+	if err != nil {
+		return err
+	}
+	// if the join token specifies FIPSness, that indicates that the cluster is FIPS,
+	// so if we are not FIPS-enabled, refuse to join
+	if parsedToken.FIPS && !n.config.FIPS {
+		return dispatcher.ErrNotFIPSCompliant
+	}
+	return nil
+}
+
 func (n *Node) loadSecurityConfig(ctx context.Context, paths *ca.SecurityConfigPaths) (*ca.SecurityConfig, func() error, error) {
 	var (
 		securityConfig *ca.SecurityConfig
@@ -826,6 +840,9 @@ func (n *Node) loadSecurityConfig(ctx context.Context, paths *ca.SecurityConfigP
 			}
 			log.G(ctx).Debug("generated CA key and certificate")
 		} else if err == ca.ErrNoLocalRootCA { // from previous error loading the root CA from disk
+			if err := n.checkJoinTokenForFIPS(); err != nil {
+				return nil, nil, err
+			}
 			rootCA, err = ca.DownloadRootCA(ctx, paths.RootCA, n.config.JoinToken, n.connBroker)
 			if err != nil {
 				return nil, nil, err
@@ -850,6 +867,9 @@ func (n *Node) loadSecurityConfig(ctx context.Context, paths *ca.SecurityConfigP
 			}
 			log.G(ctx).WithError(err).Debugf("no node credentials found in: %s", krw.Target())
 
+			if err := n.checkJoinTokenForFIPS(); err != nil {
+				return nil, nil, err
+			}
 			requestConfig := ca.CertificateRequestConfig{
 				Token:        n.config.JoinToken,
 				Availability: n.config.Availability,
