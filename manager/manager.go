@@ -844,13 +844,14 @@ func (m *Manager) decryptRootCAKEK(ctx context.Context, clusterID string) error 
 			return fmt.Errorf("invalid PEM-encoded private key inside of cluster %s", clusterID)
 		}
 
-		if !keyutils.IsEncryptedPEMBlock(keyBlock) {
+		// If the key were ever encrypted, it would only have been encrypted using PKCS1 format.
+		if !keyutils.Default.IsEncryptedPEMBlock(keyBlock) {
 			return nil
 		}
 
-		unencryptedDER, err := keyutils.DecryptPEMBlock(keyBlock, passphrase)
+		unencryptedDER, err := keyutils.Default.DecryptPEMBlock(keyBlock, passphrase)
 		if err != nil {
-			unencryptedDER, err = keyutils.DecryptPEMBlock(keyBlock, passphrasePrev)
+			unencryptedDER, err = keyutils.Default.DecryptPEMBlock(keyBlock, passphrasePrev)
 			if err != nil {
 				return err
 			}

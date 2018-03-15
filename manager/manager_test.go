@@ -291,7 +291,7 @@ func TestManagerLockUnlock(t *testing.T) {
 	require.NoError(t, err)
 	keyBlock, _ := pem.Decode(key)
 	require.NotNil(t, keyBlock)
-	require.False(t, keyutils.IsEncryptedPEMBlock(keyBlock))
+	require.False(t, keyutils.Default.IsEncryptedPEMBlock(keyBlock))
 	require.Len(t, keyBlock.Headers, 2)
 	currentDEK, err := decodePEMHeaderValue(keyBlock.Headers[pemHeaderRaftDEK], nil)
 	require.NoError(t, err)
@@ -338,7 +338,7 @@ func TestManagerLockUnlock(t *testing.T) {
 		keyBlock, _ = pem.Decode(updatedKey)
 		require.NotNil(t, keyBlock) // this should never error due to atomic writes
 
-		if !keyutils.IsEncryptedPEMBlock(keyBlock) {
+		if !keyutils.Default.IsEncryptedPEMBlock(keyBlock) {
 			return fmt.Errorf("Key not encrypted")
 		}
 
@@ -409,7 +409,7 @@ func TestManagerLockUnlock(t *testing.T) {
 	// but not rotated
 	keyBlock, _ = pem.Decode(unlockedKey)
 	require.NotNil(t, keyBlock)
-	require.False(t, keyutils.IsEncryptedPEMBlock(keyBlock))
+	require.False(t, keyutils.Default.IsEncryptedPEMBlock(keyBlock))
 
 	unencryptedDEK, err := decodePEMHeaderValue(keyBlock.Headers[pemHeaderRaftDEK], nil)
 	require.NoError(t, err)
@@ -491,12 +491,12 @@ func TestManagerDecryptsRootKeyMaterial(t *testing.T) {
 
 	keyBlock, _ := pem.Decode(cluster.RootCA.CAKey)
 	require.NotNil(t, keyBlock)
-	require.False(t, keyutils.IsEncryptedPEMBlock(keyBlock))
+	require.False(t, keyutils.Default.IsEncryptedPEMBlock(keyBlock))
 
 	unencryptedDERBytes := keyBlock.Bytes
 
 	// update the cluster CA key material to be encrypted with the current passphrase
-	keyBlock, err = keyutils.EncryptPEMBlock(unencryptedDERBytes, []byte("kek"))
+	keyBlock, err = keyutils.Default.EncryptPEMBlock(unencryptedDERBytes, []byte("kek"))
 	require.NoError(t, err)
 
 	require.NoError(t, m.raftNode.MemoryStore().Update(func(tx store.Tx) error {
@@ -526,7 +526,7 @@ func TestManagerDecryptsRootKeyMaterial(t *testing.T) {
 				if keyBlock == nil {
 					return fmt.Errorf("could not pem decode root key")
 				}
-				if keyutils.IsEncryptedPEMBlock(keyBlock) {
+				if keyutils.Default.IsEncryptedPEMBlock(keyBlock) {
 					return fmt.Errorf("root key material not decrypted yet")
 				}
 				return nil
@@ -539,7 +539,7 @@ func TestManagerDecryptsRootKeyMaterial(t *testing.T) {
 	defer os.Unsetenv(ca.PassphraseENVVarPrev)
 
 	// update the cluster CA key material to be encrypted with the previous passphrase
-	keyBlock, err = keyutils.EncryptPEMBlock(unencryptedDERBytes, []byte("kek_old"))
+	keyBlock, err = keyutils.Default.EncryptPEMBlock(unencryptedDERBytes, []byte("kek_old"))
 	require.NoError(t, err)
 
 	require.NoError(t, m.raftNode.MemoryStore().Update(func(tx store.Tx) error {

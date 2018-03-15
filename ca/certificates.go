@@ -655,10 +655,11 @@ func newLocalSigner(keyBytes, certBytes []byte, certExpiry time.Duration, rootPo
 		passphrasePrev = []byte(p)
 	}
 
-	// Attempt to decrypt the current private-key with the passphrases provided
-	priv, err = keyutils.ParsePrivateKeyPEMWithPassword(keyBytes, passphrase)
+	// Attempt to decrypt the current private-key with the passphrases provided - it could only have ever been
+	// encrypted in PKCS1 format, so attempt to decrypt with the default keyutil.
+	priv, err = keyutils.Default.ParsePrivateKeyPEMWithPassword(keyBytes, passphrase)
 	if err != nil {
-		priv, err = keyutils.ParsePrivateKeyPEMWithPassword(keyBytes, passphrasePrev)
+		priv, err = keyutils.Default.ParsePrivateKeyPEMWithPassword(keyBytes, passphrasePrev)
 		if err != nil {
 			return nil, errors.Wrap(err, "malformed private key")
 		}
@@ -803,14 +804,6 @@ func CreateRootCA(rootCN string) (RootCA, error) {
 	cert, _, key, err := initca.New(&req)
 	if err != nil {
 		return RootCA{}, err
-	}
-
-	// Convert key to PKCS#8 in FIPS mode
-	if keyutils.FIPSEnabled() {
-		key, err = pkcs8.ConvertECPrivateKeyPEM(key)
-		if err != nil {
-			return RootCA{}, err
-		}
 	}
 
 	rootCA, err := NewRootCA(cert, cert, key, DefaultNodeCertExpiration, nil)
@@ -981,4 +974,25 @@ func NormalizePEMs(certs []byte) []byte {
 		pemBlock.Headers = nil
 		results = append(results, pem.EncodeToMemory(pemBlock)...)
 	}
+}
+
+// ConvertRootCAToPKCS8 takes a root CA, and converts the key to PKCS8 format
+func ConvertRootCAToPKCS8(rootCA RootCA) error {
+	s, err := rootCA.Signer()
+	if err != nil {
+		return err
+	}
+	pemBlock, _ := pem.Decode(s.Key)
+	if pemBlock == nil { // if the key is invalid, don't bother
+		return errors.New("invalid root CA key")
+	}
+	if keyutils.IsPKCS8(pemBlock.Bytes) { // we're good
+		return nil
+	}
+	key, err := pkcs8.ConvertECPrivateKeyPEM(s.Key)
+	if err != nil {
+		return err
+	}
+	s.Key = key
+	return nil
 }

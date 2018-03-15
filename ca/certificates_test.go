@@ -27,7 +27,6 @@ import (
 	"github.com/docker/go-events"
 	"github.com/docker/swarmkit/api"
 	"github.com/docker/swarmkit/ca"
-	"github.com/docker/swarmkit/ca/keyutils"
 	cautils "github.com/docker/swarmkit/ca/testutils"
 	"github.com/docker/swarmkit/connectionbroker"
 	"github.com/docker/swarmkit/identity"
@@ -81,29 +80,37 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-func TestCreateRootCAKeyFormat(t *testing.T) {
-	// Check if the CA key generated is PKCS#1 when FIPS-mode is off
+func TestConvertRootCAToPKCS8(t *testing.T) {
+	isPKCS8 := func(r ca.RootCA) bool {
+		s, err := r.Signer()
+		require.NoError(t, err)
+		block, _ := pem.Decode(s.Key)
+		require.NotNil(t, block)
+		return block.Type == "PRIVATE KEY"
+	}
+
 	rootCA, err := ca.CreateRootCA("rootCA")
 	require.NoError(t, err)
+	require.False(t, isPKCS8(rootCA))
 
+	// converts to PKCS8
+	require.NoError(t, ca.ConvertRootCAToPKCS8(rootCA))
+	require.True(t, isPKCS8(rootCA))
+
+	// Does not error if already PKCS8
+	require.NoError(t, ca.ConvertRootCAToPKCS8(rootCA))
+	require.True(t, isPKCS8(rootCA))
+
+	// if the key is invalid, converting fails
 	s, err := rootCA.Signer()
 	require.NoError(t, err)
-	block, _ := pem.Decode(s.Key)
-	require.NotNil(t, block)
-	require.Equal(t, "EC PRIVATE KEY", block.Type)
+	s.Key = []byte("garbage")
+	require.Error(t, ca.ConvertRootCAToPKCS8(rootCA))
 
-	// Check if the CA key generated is PKCS#8 when FIPS-mode is on
-	os.Setenv(keyutils.FIPSEnvVar, "1")
-	defer os.Unsetenv(keyutils.FIPSEnvVar)
-
-	rootCA, err = ca.CreateRootCA("rootCA")
+	// if there is no key, converting fails
+	rootCA, err = ca.NewRootCA(rootCA.Certs, nil, nil, ca.DefaultNodeCertExpiration, nil)
 	require.NoError(t, err)
-
-	s, err = rootCA.Signer()
-	require.NoError(t, err)
-	block, _ = pem.Decode(s.Key)
-	require.NotNil(t, block)
-	require.Equal(t, "PRIVATE KEY", block.Type)
+	require.Error(t, ca.ConvertRootCAToPKCS8(rootCA))
 }
 
 func TestCreateRootCASaveRootCA(t *testing.T) {
