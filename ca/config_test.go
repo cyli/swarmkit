@@ -99,7 +99,7 @@ func TestCreateSecurityConfigEmptyDir(t *testing.T) {
 
 	// Remove all the contents from the temp dir and try again with a new node
 	os.RemoveAll(tc.TempDir)
-	krw := ca.NewKeyReadWriter(tc.Paths.Node, nil, nil)
+	krw := ca.NewKeyReadWriter(tc.Paths.Node, nil, nil, nil)
 	nodeConfig, cancel, err := tc.RootCA.CreateSecurityConfig(tc.Context, krw,
 		ca.CertificateRequestConfig{
 			Token:      tc.WorkerToken,
@@ -125,7 +125,7 @@ func TestCreateSecurityConfigNoCerts(t *testing.T) {
 	tc := cautils.NewTestCA(t)
 	defer tc.Stop()
 
-	krw := ca.NewKeyReadWriter(tc.Paths.Node, nil, nil)
+	krw := ca.NewKeyReadWriter(tc.Paths.Node, nil, nil, nil)
 	root, err := helpers.ParseCertificatePEM(tc.RootCA.Certs)
 	assert.NoError(t, err)
 
@@ -194,7 +194,7 @@ func TestLoadSecurityConfigExpiredCert(t *testing.T) {
 	s, err := tc.RootCA.Signer()
 	require.NoError(t, err)
 
-	krw := ca.NewKeyReadWriter(tc.Paths.Node, nil, nil)
+	krw := ca.NewKeyReadWriter(tc.Paths.Node, nil, nil, nil)
 	now := time.Now()
 
 	_, _, err = tc.RootCA.IssueAndSaveNewCertificates(krw, "cn", "ou", "org")
@@ -240,7 +240,7 @@ func TestLoadSecurityConfigInvalidCert(t *testing.T) {
 some random garbage\n
 -----END CERTIFICATE-----`), 0644)
 
-	krw := ca.NewKeyReadWriter(tc.Paths.Node, nil, nil)
+	krw := ca.NewKeyReadWriter(tc.Paths.Node, nil, nil, nil)
 
 	_, _, err := ca.LoadSecurityConfig(tc.Context, tc.RootCA, krw, false)
 	assert.Error(t, err)
@@ -258,7 +258,7 @@ func TestLoadSecurityConfigInvalidKey(t *testing.T) {
 some random garbage\n
 -----END PRIVATE KEY-----`), 0644)
 
-	krw := ca.NewKeyReadWriter(tc.Paths.Node, nil, nil)
+	krw := ca.NewKeyReadWriter(tc.Paths.Node, nil, nil, nil)
 
 	_, _, err := ca.LoadSecurityConfig(tc.Context, tc.RootCA, krw, false)
 	assert.Error(t, err)
@@ -272,11 +272,11 @@ func TestLoadSecurityConfigIncorrectPassphrase(t *testing.T) {
 	defer tc.Stop()
 
 	paths := ca.NewConfigPaths(tc.TempDir)
-	_, _, err := tc.RootCA.IssueAndSaveNewCertificates(ca.NewKeyReadWriter(paths.Node, []byte("kek"), nil),
+	_, _, err := tc.RootCA.IssueAndSaveNewCertificates(ca.NewKeyReadWriter(paths.Node, []byte("kek"), nil, nil),
 		"nodeID", ca.WorkerRole, tc.Organization)
 	require.NoError(t, err)
 
-	_, _, err = ca.LoadSecurityConfig(tc.Context, tc.RootCA, ca.NewKeyReadWriter(paths.Node, nil, nil), false)
+	_, _, err = ca.LoadSecurityConfig(tc.Context, tc.RootCA, ca.NewKeyReadWriter(paths.Node, nil, nil, nil), false)
 	require.IsType(t, ca.ErrInvalidKEK{}, err)
 }
 
@@ -288,7 +288,7 @@ func TestLoadSecurityConfigIntermediates(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(tempdir)
 	paths := ca.NewConfigPaths(tempdir)
-	krw := ca.NewKeyReadWriter(paths.Node, nil, nil)
+	krw := ca.NewKeyReadWriter(paths.Node, nil, nil, nil)
 
 	rootCA, err := ca.NewRootCA(cautils.ECDSACertChain[2], nil, nil, ca.DefaultNodeCertExpiration, nil)
 	require.NoError(t, err)
@@ -328,7 +328,7 @@ func TestLoadSecurityConfigKeyFormat(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(tempdir)
 	paths := ca.NewConfigPaths(tempdir)
-	krw := ca.NewKeyReadWriter(paths.Node, nil, nil)
+	krw := ca.NewKeyReadWriter(paths.Node, nil, nil, nil)
 
 	rootCA, err := ca.NewRootCA(cautils.ECDSACertChain[1], nil, nil, ca.DefaultNodeCertExpiration, nil)
 	require.NoError(t, err)
@@ -382,7 +382,7 @@ func TestSecurityConfigUpdateRootCA(t *testing.T) {
 	configPaths := ca.NewConfigPaths(tempdir)
 
 	secConfig, cancel, err := rootCA.CreateSecurityConfig(tc.Context,
-		ca.NewKeyReadWriter(configPaths.Node, nil, nil), ca.CertificateRequestConfig{})
+		ca.NewKeyReadWriter(configPaths.Node, nil, nil, nil), ca.CertificateRequestConfig{})
 	require.NoError(t, err)
 	cancel()
 	// update the server TLS to require certificates, otherwise this will all pass
@@ -441,7 +441,7 @@ func TestSecurityConfigUpdateRootCA(t *testing.T) {
 	conn.Close()
 
 	// make sure any generated certs after updating contain the intermediate
-	krw := ca.NewKeyReadWriter(configPaths.Node, nil, nil)
+	krw := ca.NewKeyReadWriter(configPaths.Node, nil, nil, nil)
 	_, _, err = secConfig.RootCA().IssueAndSaveNewCertificates(krw, "cn", "ou", "org")
 	require.NoError(t, err)
 	generatedCert, _, err := krw.Read()
@@ -463,7 +463,7 @@ func TestSecurityConfigUpdateRootCAUpdateConsistentWithTLSCertificates(t *testin
 	}
 	tempdir, err := ioutil.TempDir("", "")
 	require.NoError(t, err)
-	krw := ca.NewKeyReadWriter(ca.NewConfigPaths(tempdir).Node, nil, nil)
+	krw := ca.NewKeyReadWriter(ca.NewConfigPaths(tempdir).Node, nil, nil, nil)
 
 	rootCA, err := ca.CreateRootCA("rootcn")
 	require.NoError(t, err)
@@ -624,7 +624,7 @@ func TestRenewTLSConfigUpdatesRootOnUnknownAuthError(t *testing.T) {
 	}, 2*time.Second))
 
 	paths := ca.NewConfigPaths(tempdir)
-	krw := ca.NewKeyReadWriter(paths.Node, nil, nil)
+	krw := ca.NewKeyReadWriter(paths.Node, nil, nil, nil)
 	for i, testCase := range []struct {
 		role          api.NodeRole
 		initialRootCA *ca.RootCA
@@ -813,7 +813,7 @@ func writeAlmostExpiringCertToDisk(t *testing.T, tc *cautils.TestCA, cn, ou, org
 
 	// Issue a new certificate with the same details as the current config, but with 1 min expiration time, and
 	// overwrite the existing cert on disk
-	_, _, err = newRootCA.IssueAndSaveNewCertificates(ca.NewKeyReadWriter(tc.Paths.Node, nil, nil), cn, ou, org)
+	_, _, err = newRootCA.IssueAndSaveNewCertificates(ca.NewKeyReadWriter(tc.Paths.Node, nil, nil, nil), cn, ou, org)
 	assert.NoError(t, err)
 }
 

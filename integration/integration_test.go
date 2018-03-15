@@ -821,7 +821,7 @@ func TestNodeRejoins(t *testing.T) {
 	newRootCA, err := ca.CreateRootCA("bad root CA")
 	require.NoError(t, err)
 	ca.SaveRootCA(newRootCA, paths.RootCA)
-	krw := ca.NewKeyReadWriter(paths.Node, nil, &manager.RaftDEKData{}) // make sure the key headers are preserved
+	krw := ca.NewKeyReadWriter(paths.Node, nil, &manager.RaftDEKData{}, nil) // make sure the key headers are preserved
 	_, _, err = krw.Read()
 	require.NoError(t, err)
 	_, _, err = newRootCA.IssueAndSaveNewCertificates(krw, nodeID, ca.WorkerRole, clusterInfo.ID)

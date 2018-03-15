@@ -753,7 +753,7 @@ func (n *Node) loadSecurityConfig(ctx context.Context, paths *ca.SecurityConfigP
 		cancel         func() error
 	)
 
-	krw := ca.NewKeyReadWriter(paths.Node, n.unlockKey, &manager.RaftDEKData{})
+	krw := ca.NewKeyReadWriter(paths.Node, n.unlockKey, &manager.RaftDEKData{}, nil)
 	if err := krw.Migrate(); err != nil {
 		return nil, nil, err
 	}
@@ -783,7 +783,7 @@ func (n *Node) loadSecurityConfig(ctx context.Context, paths *ca.SecurityConfigP
 			if n.config.AutoLockManagers {
 				n.unlockKey = encryption.GenerateSecretKey()
 			}
-			krw = ca.NewKeyReadWriter(paths.Node, n.unlockKey, &manager.RaftDEKData{})
+			krw = ca.NewKeyReadWriter(paths.Node, n.unlockKey, &manager.RaftDEKData{}, nil)
 			rootCA, err = ca.CreateRootCA(ca.DefaultRootCN)
 			if err != nil {
 				return nil, nil, err
@@ -1114,7 +1114,7 @@ func (n *Node) superviseManager(ctx context.Context, securityConfig *ca.Security
 // run on older version of swarmkit
 func (n *Node) DowngradeKey() error {
 	paths := ca.NewConfigPaths(filepath.Join(n.config.StateDir, certDirectory))
-	krw := ca.NewKeyReadWriter(paths.Node, n.config.UnlockKey, nil)
+	krw := ca.NewKeyReadWriter(paths.Node, n.config.UnlockKey, nil, nil)
 
 	return krw.DowngradeKey()
 }

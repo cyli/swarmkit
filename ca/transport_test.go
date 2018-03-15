@@ -15,7 +15,7 @@ func TestNewMutableTLS(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(tempdir)
 	paths := NewConfigPaths(tempdir)
-	krw := NewKeyReadWriter(paths.Node, nil, nil)
+	krw := NewKeyReadWriter(paths.Node, nil, nil, nil)
 
 	rootCA, err := CreateRootCA("rootCN")
 	require.NoError(t, err)
@@ -36,7 +36,7 @@ func TestGetAndValidateCertificateSubject(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(tempdir)
 	paths := NewConfigPaths(tempdir)
-	krw := NewKeyReadWriter(paths.Node, nil, nil)
+	krw := NewKeyReadWriter(paths.Node, nil, nil, nil)
 
 	rootCA, err := CreateRootCA("rootCN")
 	require.NoError(t, err)
@@ -56,7 +56,7 @@ func TestLoadNewTLSConfig(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(tempdir)
 	paths := NewConfigPaths(tempdir)
-	krw := NewKeyReadWriter(paths.Node, nil, nil)
+	krw := NewKeyReadWriter(paths.Node, nil, nil, nil)
 
 	rootCA, err := CreateRootCA("rootCN")
 	require.NoError(t, err)

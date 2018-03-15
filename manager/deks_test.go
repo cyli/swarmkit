@@ -123,7 +123,7 @@ func TestNewRaftDEKManager(t *testing.T) {
 	cert, key, err := cautils.CreateRootCertAndKey("cn")
 	require.NoError(t, err)
 
-	krw := ca.NewKeyReadWriter(paths.Node, nil, nil)
+	krw := ca.NewKeyReadWriter(paths.Node, nil, nil, nil)
 	require.NoError(t, krw.Write(cert, key, nil))
 
 	keyBytes, err := ioutil.ReadFile(paths.Node.Key)
@@ -165,7 +165,7 @@ func TestRaftDEKManagerNeedsRotateGetKeys(t *testing.T) {
 	// if there is no PendingDEK, and no NeedsRotation flag:  NeedsRotation=false
 	keys := raft.EncryptionKeys{CurrentDEK: []byte("hello")}
 	dekManager, err := NewRaftDEKManager(
-		ca.NewKeyReadWriter(paths.Node, nil, RaftDEKData{EncryptionKeys: keys}))
+		ca.NewKeyReadWriter(paths.Node, nil, RaftDEKData{EncryptionKeys: keys}, nil))
 	require.NoError(t, err)
 
 	require.False(t, dekManager.NeedsRotation())
@@ -174,7 +174,7 @@ func TestRaftDEKManagerNeedsRotateGetKeys(t *testing.T) {
 	// if there is a PendingDEK, and no NeedsRotation flag:  NeedsRotation=true
 	keys = raft.EncryptionKeys{CurrentDEK: []byte("hello"), PendingDEK: []byte("another")}
 	dekManager, err = NewRaftDEKManager(
-		ca.NewKeyReadWriter(paths.Node, nil, RaftDEKData{EncryptionKeys: keys}))
+		ca.NewKeyReadWriter(paths.Node, nil, RaftDEKData{EncryptionKeys: keys}, nil))
 	require.NoError(t, err)
 
 	require.True(t, dekManager.NeedsRotation())
@@ -186,7 +186,7 @@ func TestRaftDEKManagerNeedsRotateGetKeys(t *testing.T) {
 		ca.NewKeyReadWriter(paths.Node, nil, RaftDEKData{
 			EncryptionKeys: keys,
 			NeedsRotation:  true,
-		}))
+		}, nil))
 	require.NoError(t, err)
 
 	require.True(t, dekManager.NeedsRotation())
@@ -200,7 +200,7 @@ func TestRaftDEKManagerNeedsRotateGetKeys(t *testing.T) {
 	krw := ca.NewKeyReadWriter(paths.Node, nil, RaftDEKData{
 		EncryptionKeys: keys,
 		NeedsRotation:  true,
-	})
+	}, nil)
 	dekManager, err = NewRaftDEKManager(krw)
 	require.NoError(t, err)
 
@@ -218,7 +218,7 @@ func TestRaftDEKManagerNeedsRotateGetKeys(t *testing.T) {
 	krw = ca.NewKeyReadWriter(paths.Node, nil, RaftDEKData{
 		EncryptionKeys: keys,
 		NeedsRotation:  true,
-	})
+	}, nil)
 	dekManager, err = NewRaftDEKManager(krw)
 
 	require.NoError(t, err)
@@ -254,7 +254,7 @@ func TestRaftDEKManagerUpdateKeys(t *testing.T) {
 	krw := ca.NewKeyReadWriter(paths.Node, nil, RaftDEKData{
 		EncryptionKeys: keys,
 		NeedsRotation:  true,
-	})
+	}, nil)
 	require.NoError(t, krw.Write(cert, key, nil))
 
 	dekManager, err := NewRaftDEKManager(krw)
@@ -301,7 +301,7 @@ func TestRaftDEKManagerMaybeUpdateKEK(t *testing.T) {
 	keys := raft.EncryptionKeys{CurrentDEK: []byte("current dek")}
 
 	// trying to update a KEK will error if the version is the same but the kek is different
-	krw := ca.NewKeyReadWriter(paths.Node, nil, RaftDEKData{EncryptionKeys: keys})
+	krw := ca.NewKeyReadWriter(paths.Node, nil, RaftDEKData{EncryptionKeys: keys}, nil)
 	require.NoError(t, krw.Write(cert, key, nil))
 	dekManager, err := NewRaftDEKManager(krw)
 	require.NoError(t, err)
@@ -335,7 +335,7 @@ func TestRaftDEKManagerMaybeUpdateKEK(t *testing.T) {
 	require.NotEqual(t, keyBytes, keyBytes2)
 	keyBytes = keyBytes2
 
-	readKRW := ca.NewKeyReadWriter(paths.Node, []byte("locked now"), RaftDEKData{})
+	readKRW := ca.NewKeyReadWriter(paths.Node, []byte("locked now"), RaftDEKData{}, nil)
 	_, _, err = readKRW.Read()
 	require.NoError(t, err)
 
@@ -373,7 +373,7 @@ func TestRaftDEKManagerMaybeUpdateKEK(t *testing.T) {
 
 	// going from locked to unlock does not result in the NeedsRotation flag, but does result in
 	// the key being decrypted
-	krw = ca.NewKeyReadWriter(paths.Node, []byte("kek"), RaftDEKData{EncryptionKeys: keys})
+	krw = ca.NewKeyReadWriter(paths.Node, []byte("kek"), RaftDEKData{EncryptionKeys: keys}, nil)
 	require.NoError(t, krw.Write(cert, key, nil))
 	dekManager, err = NewRaftDEKManager(krw)
 	require.NoError(t, err)
@@ -392,7 +392,7 @@ func TestRaftDEKManagerMaybeUpdateKEK(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEqual(t, keyBytes, keyBytes2)
 
-	readKRW = ca.NewKeyReadWriter(paths.Node, nil, RaftDEKData{})
+	readKRW = ca.NewKeyReadWriter(paths.Node, nil, RaftDEKData{}, nil)
 	_, _, err = readKRW.Read()
 	require.NoError(t, err)
 }
@@ -448,16 +448,16 @@ O0T3aXuZGYNyh//KqAoA3erCmh6HauMz84Y=
 	require.NoError(t, ioutil.WriteFile(path.Node.Key, badKey, 0600))
 	require.NoError(t, ioutil.WriteFile(path.Node.Cert, matchingCert, 0644))
 
-	krw := ca.NewKeyReadWriter(path.Node, wrongKEK, RaftDEKData{})
+	krw := ca.NewKeyReadWriter(path.Node, wrongKEK, RaftDEKData{}, nil)
 	_, _, err = krw.Read()
 	require.IsType(t, ca.ErrInvalidKEK{}, errors.Cause(err))
 
-	krw = ca.NewKeyReadWriter(path.Node, falsePositiveKEK, RaftDEKData{})
+	krw = ca.NewKeyReadWriter(path.Node, falsePositiveKEK, RaftDEKData{}, nil)
 	_, _, err = krw.Read()
 	require.Error(t, err)
 	require.IsType(t, ca.ErrInvalidKEK{}, errors.Cause(err))
 
-	krw = ca.NewKeyReadWriter(path.Node, realKEK, RaftDEKData{})
+	krw = ca.NewKeyReadWriter(path.Node, realKEK, RaftDEKData{}, nil)
 	_, _, err = krw.Read()
 	require.NoError(t, err)
 }

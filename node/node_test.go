@@ -45,7 +45,7 @@ func TestLoadSecurityConfigNewNode(t *testing.T) {
 		defer cancel()
 		require.NotNil(t, securityConfig)
 
-		unencryptedReader := ca.NewKeyReadWriter(paths.Node, nil, nil)
+		unencryptedReader := ca.NewKeyReadWriter(paths.Node, nil, nil, nil)
 		_, _, err = unencryptedReader.Read()
 		if !autoLockManagers {
 			require.NoError(t, err)
@@ -120,7 +120,7 @@ func TestLoadSecurityConfigLoadFromDisk(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, ca.SaveRootCA(rootCA, paths.RootCA))
 
-	krw := ca.NewKeyReadWriter(paths.Node, []byte("passphrase"), nil)
+	krw := ca.NewKeyReadWriter(paths.Node, []byte("passphrase"), nil, nil)
 	require.NoError(t, err)
 	_, _, err = rootCA.IssueAndSaveNewCertificates(krw, identity.NewID(), ca.WorkerRole, identity.NewID())
 	require.NoError(t, err)
@@ -198,7 +198,7 @@ func TestLoadSecurityConfigDownloadAllCerts(t *testing.T) {
 	cancel()
 
 	// the TLS key and cert were written to disk unencrypted
-	_, _, err = ca.NewKeyReadWriter(paths.Node, nil, nil).Read()
+	_, _, err = ca.NewKeyReadWriter(paths.Node, nil, nil, nil).Read()
 	require.NoError(t, err)
 
 	// remove the TLS cert and key, and mark the root CA cert so that we will
@@ -248,9 +248,9 @@ func TestLoadSecurityConfigDownloadAllCerts(t *testing.T) {
 	require.Equal(t, certBytes, readCertBytes)
 
 	// the TLS node cert and key were saved to disk encrypted, though
-	_, _, err = ca.NewKeyReadWriter(paths.Node, nil, nil).Read()
+	_, _, err = ca.NewKeyReadWriter(paths.Node, nil, nil, nil).Read()
 	require.Error(t, err)
-	_, _, err = ca.NewKeyReadWriter(paths.Node, []byte("passphrase"), nil).Read()
+	_, _, err = ca.NewKeyReadWriter(paths.Node, []byte("passphrase"), nil, nil).Read()
 	require.NoError(t, err)
 }
 
@@ -282,7 +282,7 @@ func TestManagerRespectsDispatcherRootCAUpdate(t *testing.T) {
 	paths := ca.NewConfigPaths(filepath.Join(tmpDir, certDirectory))
 	rootCA, err := ca.GetLocalRootCA(paths.RootCA)
 	require.NoError(t, err)
-	managerSecConfig, cancel, err := ca.LoadSecurityConfig(context.Background(), rootCA, ca.NewKeyReadWriter(paths.Node, nil, nil), false)
+	managerSecConfig, cancel, err := ca.LoadSecurityConfig(context.Background(), rootCA, ca.NewKeyReadWriter(paths.Node, nil, nil, nil), false)
 	require.NoError(t, err)
 	defer cancel()
 
@@ -321,11 +321,11 @@ func TestAgentRespectsDispatcherRootCAUpdate(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, ca.SaveRootCA(rootCA, paths.RootCA))
 	managerSecConfig, cancel, err := rootCA.CreateSecurityConfig(context.Background(),
-		ca.NewKeyReadWriter(paths.Node, nil, nil), ca.CertificateRequestConfig{})
+		ca.NewKeyReadWriter(paths.Node, nil, nil, nil), ca.CertificateRequestConfig{})
 	require.NoError(t, err)
 	defer cancel()
 
-	_, _, err = rootCA.IssueAndSaveNewCertificates(ca.NewKeyReadWriter(paths.Node, nil, nil), "workerNode",
+	_, _, err = rootCA.IssueAndSaveNewCertificates(ca.NewKeyReadWriter(paths.Node, nil, nil, nil), "workerNode",
 		ca.WorkerRole, managerSecConfig.ServerTLSCreds.Organization())
 	require.NoError(t, err)
 
@@ -460,7 +460,7 @@ func TestManagerFailedStartup(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, ca.SaveRootCA(rootCA, paths.RootCA))
 
-	krw := ca.NewKeyReadWriter(paths.Node, nil, nil)
+	krw := ca.NewKeyReadWriter(paths.Node, nil, nil, nil)
 	require.NoError(t, err)
 	_, _, err = rootCA.IssueAndSaveNewCertificates(krw, identity.NewID(), ca.ManagerRole, identity.NewID())
 	require.NoError(t, err)

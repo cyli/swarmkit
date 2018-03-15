@@ -171,7 +171,7 @@ func NewTestCAFromAPIRootCA(t *testing.T, tempBaseDir string, apiRootCA api.Root
 		}
 	}
 
-	krw := ca.NewKeyReadWriter(paths.Node, nil, nil)
+	krw := ca.NewKeyReadWriter(paths.Node, nil, nil, nil)
 	if len(krwGenerators) > 0 {
 		krw = krwGenerators[0](paths.Node)
 	}

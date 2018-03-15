@@ -31,7 +31,7 @@ func TestIsStateDirty(t *testing.T) {
 	defer os.RemoveAll(stateDir)
 
 	tc := testutils.NewTestCA(t, func(p ca.CertPaths) *ca.KeyReadWriter {
-		return ca.NewKeyReadWriter(p, []byte("kek"), nil)
+		return ca.NewKeyReadWriter(p, []byte("kek"), nil, nil)
 	})
 	defer tc.Stop()
 

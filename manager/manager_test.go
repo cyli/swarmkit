@@ -43,7 +43,7 @@ func TestManager(t *testing.T) {
 	defer os.RemoveAll(stateDir)
 
 	tc := cautils.NewTestCA(t, func(p ca.CertPaths) *ca.KeyReadWriter {
-		return ca.NewKeyReadWriter(p, []byte("kek"), nil)
+		return ca.NewKeyReadWriter(p, []byte("kek"), nil, nil)
 	})
 	defer tc.Stop()
 

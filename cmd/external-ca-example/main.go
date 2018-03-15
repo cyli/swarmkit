@@ -35,7 +35,7 @@ func main() {
 	clusterID := identity.NewID()
 	nodeID := identity.NewID()
 
-	kw := ca.NewKeyReadWriter(nodeConfigPaths.Node, nil, nil)
+	kw := ca.NewKeyReadWriter(nodeConfigPaths.Node, nil, nil, nil)
 	if _, _, err := rootCA.IssueAndSaveNewCertificates(kw, nodeID, ca.ManagerRole, clusterID); err != nil {
 		logrus.Fatalf("unable to create initial manager node credentials: %s", err)
 	}

@@ -46,7 +46,7 @@ func generateCerts(tmpDir string, rootCA *ca.RootCA, nodeID, role, org string, w
 		}
 	}
 	_, _, err = rootCA.IssueAndSaveNewCertificates(
-		ca.NewKeyReadWriter(certPaths.Node, nil, nil), nodeID, role, org)
+		ca.NewKeyReadWriter(certPaths.Node, nil, nil, nil), nodeID, role, org)
 	return err
 }
 

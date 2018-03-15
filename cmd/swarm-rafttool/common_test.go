@@ -61,7 +61,7 @@ func TestDecrypt(t *testing.T) {
 	// write a key to disk, else we won't be able to decrypt anything
 	paths := certPaths(tempdir)
 	krw := ca.NewKeyReadWriter(paths.Node, kek,
-		manager.RaftDEKData{EncryptionKeys: raft.EncryptionKeys{CurrentDEK: dek}})
+		manager.RaftDEKData{EncryptionKeys: raft.EncryptionKeys{CurrentDEK: dek}}, nil)
 	cert, key, err := testutils.CreateRootCertAndKey("not really a root, just need cert and key")
 	require.NoError(t, err)
 	require.NoError(t, krw.Write(cert, key, nil))

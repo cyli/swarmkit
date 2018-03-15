@@ -46,7 +46,7 @@ func getKRW(swarmdir, unlockKey string) (*ca.KeyReadWriter, error) {
 			return nil, err
 		}
 	}
-	krw := ca.NewKeyReadWriter(certPaths(swarmdir).Node, kek, manager.RaftDEKData{})
+	krw := ca.NewKeyReadWriter(certPaths(swarmdir).Node, kek, manager.RaftDEKData{}, nil)
 	_, _, err = krw.Read() // loads all the key data into the KRW object
 	if err != nil {
 		return nil, err

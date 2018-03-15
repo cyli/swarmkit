@@ -330,7 +330,7 @@ func TestGetRemoteCA(t *testing.T) {
 	require.Equal(t, 2, len(downloadedRootCA.Pool.Subjects()))
 
 	for _, rootCA := range []ca.RootCA{tc.RootCA, otherRootCA} {
-		krw := ca.NewKeyReadWriter(paths.Node, nil, nil)
+		krw := ca.NewKeyReadWriter(paths.Node, nil, nil, nil)
 		_, _, err := rootCA.IssueAndSaveNewCertificates(krw, "cn", "ou", "org")
 		require.NoError(t, err)
 
@@ -434,7 +434,7 @@ func TestRequestAndSaveNewCertificatesWithKEKUpdate(t *testing.T) {
 	// Copy the current RootCA without the signer
 	rca := ca.RootCA{Certs: tc.RootCA.Certs, Pool: tc.RootCA.Pool}
 
-	unencryptedKeyReader := ca.NewKeyReadWriter(tc.Paths.Node, nil, nil)
+	unencryptedKeyReader := ca.NewKeyReadWriter(tc.Paths.Node, nil, nil, nil)
 
 	// key for the manager and worker are both unencrypted
 	for _, token := range []string{tc.ManagerToken, tc.WorkerToken} {
@@ -478,7 +478,7 @@ func TestRequestAndSaveNewCertificatesWithKEKUpdate(t *testing.T) {
 
 		if token == tc.ManagerToken {
 			require.Error(t, err)
-			_, _, err = ca.NewKeyReadWriter(tc.Paths.Node, []byte("kek!"), nil).Read()
+			_, _, err = ca.NewKeyReadWriter(tc.Paths.Node, []byte("kek!"), nil, nil).Read()
 			require.NoError(t, err)
 		} else {
 			require.NoError(t, err)
@@ -492,7 +492,7 @@ func testIssueAndSaveNewCertificates(t *testing.T, rca *ca.RootCA) {
 	require.NoError(t, err)
 	defer os.RemoveAll(tempdir)
 	paths := ca.NewConfigPaths(tempdir)
-	krw := ca.NewKeyReadWriter(paths.Node, nil, nil)
+	krw := ca.NewKeyReadWriter(paths.Node, nil, nil, nil)
 
 	var issuer *x509.Certificate
 	if len(rca.Intermediates) > 0 {
@@ -994,7 +994,7 @@ func TestNewRootCABundle(t *testing.T) {
 	assert.Equal(t, 2, len(newRootCA.Pool.Subjects()))
 
 	// If I use newRootCA's IssueAndSaveNewCertificates to sign certs, I'll get the correct CA in the chain
-	kw := ca.NewKeyReadWriter(paths.Node, nil, nil)
+	kw := ca.NewKeyReadWriter(paths.Node, nil, nil, nil)
 	_, _, err = newRootCA.IssueAndSaveNewCertificates(kw, "CN", "OU", "ORG")
 	assert.NoError(t, err)
 
@@ -1257,7 +1257,7 @@ func TestRootCAWithCrossSignedIntermediates(t *testing.T) {
 	require.NoError(t, err)
 
 	paths := ca.NewConfigPaths(tempdir)
-	krw := ca.NewKeyReadWriter(paths.Node, nil, nil)
+	krw := ca.NewKeyReadWriter(paths.Node, nil, nil, nil)
 	_, _, err = signWithIntermediate.IssueAndSaveNewCertificates(krw, "cn", "ou", "org")
 	require.NoError(t, err)
 	tlsCert, _, err := krw.Read()
@@ -1530,7 +1530,7 @@ func TestRootCACrossSignCACertificate(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(tempdir)
 	paths := ca.NewConfigPaths(tempdir)
-	krw := ca.NewKeyReadWriter(paths.Node, nil, nil)
+	krw := ca.NewKeyReadWriter(paths.Node, nil, nil, nil)
 
 	for _, oldRoot := range oldCAs {
 		for _, newRoot := range newCAs {

@@ -31,7 +31,7 @@ func TestExternalCACrossSign(t *testing.T) {
 	paths := ca.NewConfigPaths(tc.TempDir)
 
 	secConfig, cancel, err := tc.RootCA.CreateSecurityConfig(tc.Context,
-		ca.NewKeyReadWriter(paths.Node, nil, nil), ca.CertificateRequestConfig{})
+		ca.NewKeyReadWriter(paths.Node, nil, nil, nil), ca.CertificateRequestConfig{})
 	require.NoError(t, err)
 	cancel()
 
@@ -52,7 +52,7 @@ func TestExternalCACrossSign(t *testing.T) {
 		rootCA2, err := ca.NewRootCA(testcase.cert, testcase.cert, testcase.key, ca.DefaultNodeCertExpiration, nil)
 		require.NoError(t, err)
 
-		krw := ca.NewKeyReadWriter(paths.Node, nil, nil)
+		krw := ca.NewKeyReadWriter(paths.Node, nil, nil, nil)
 
 		_, _, err = rootCA2.IssueAndSaveNewCertificates(krw, "cn", "ou", "org")
 		require.NoError(t, err)

@@ -62,7 +62,7 @@ func getSecurityConfig(t *testing.T, localRootCA *ca.RootCA, cluster *api.Cluste
 	require.NoError(t, err)
 	defer os.RemoveAll(tempdir)
 	paths := ca.NewConfigPaths(tempdir)
-	secConfig, cancel, err := localRootCA.CreateSecurityConfig(context.Background(), ca.NewKeyReadWriter(paths.Node, nil, nil), ca.CertificateRequestConfig{})
+	secConfig, cancel, err := localRootCA.CreateSecurityConfig(context.Background(), ca.NewKeyReadWriter(paths.Node, nil, nil, nil), ca.CertificateRequestConfig{})
 	require.NoError(t, err)
 	cancel()
 	return secConfig

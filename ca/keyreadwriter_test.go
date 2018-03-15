@@ -30,7 +30,7 @@ func TestKeyReadWriter(t *testing.T) {
 	path := ca.NewConfigPaths(filepath.Join(tempdir, "subdir")) // to make sure subdirectories are created
 
 	checkCanReadWithKEK := func(kek []byte) *ca.KeyReadWriter {
-		k := ca.NewKeyReadWriter(path.Node, kek, nil)
+		k := ca.NewKeyReadWriter(path.Node, kek, nil, nil)
 		readCert, readKey, err := k.Read()
 		require.NoError(t, err)
 		require.Equal(t, cert, readCert)
@@ -38,7 +38,7 @@ func TestKeyReadWriter(t *testing.T) {
 		return k
 	}
 
-	k := ca.NewKeyReadWriter(path.Node, nil, nil)
+	k := ca.NewKeyReadWriter(path.Node, nil, nil, nil)
 
 	// can't read things that don't exist
 	_, _, err = k.Read()
@@ -79,7 +79,7 @@ func TestKeyReadWriter(t *testing.T) {
 	expectedKey = key
 
 	// without the right kek, we can't read
-	k = ca.NewKeyReadWriter(path.Node, []byte("original kek"), nil)
+	k = ca.NewKeyReadWriter(path.Node, []byte("original kek"), nil, nil)
 	_, _, err = k.Read()
 	require.Error(t, err)
 
@@ -148,7 +148,7 @@ func TestKeyReadWriterWithPemHeaderManager(t *testing.T) {
 		}
 		require.Equal(t, ca.KEKData{}, k)
 		return nil, nil
-	}})
+	}}, nil)
 	// first write will fail
 	require.Error(t, k.Write(cert, key, &badKEKData))
 	// the stored kek data will be not be updated because the write failed
@@ -165,7 +165,7 @@ func TestKeyReadWriterWithPemHeaderManager(t *testing.T) {
 	// if setting headers fail, reading fails
 	k = ca.NewKeyReadWriter(path.Node, nil, testHeaders{setHeaders: func(map[string]string, ca.KEKData) (ca.PEMKeyHeaders, error) {
 		return nil, fmt.Errorf("nope")
-	}})
+	}}, nil)
 	_, _, err = k.Read()
 	require.Error(t, err)
 
@@ -173,7 +173,7 @@ func TestKeyReadWriterWithPemHeaderManager(t *testing.T) {
 		headers = h
 		kek = k
 		return testHeaders{}, nil
-	}})
+	}}, nil)
 
 	_, _, err = k.Read()
 	require.NoError(t, err)
@@ -185,7 +185,7 @@ func TestKeyReadWriterWithPemHeaderManager(t *testing.T) {
 	k = ca.NewKeyReadWriter(path.Node, []byte("oldKek"), testHeaders{newHeaders: func(kek ca.KEKData) (map[string]string, error) {
 		require.Equal(t, []byte("newKEK"), kek.KEK)
 		return map[string]string{"updated": "headers"}, nil
-	}})
+	}}, nil)
 	require.NoError(t, k.Write(cert, key, &ca.KEKData{KEK: []byte("newKEK"), Version: 2}))
 
 	// make sure headers were correctly set
@@ -193,7 +193,7 @@ func TestKeyReadWriterWithPemHeaderManager(t *testing.T) {
 		headers = h
 		kek = k
 		return testHeaders{}, nil
-	}})
+	}}, nil)
 	_, _, err = k.Read()
 	require.NoError(t, err)
 	require.Equal(t, ca.KEKData{KEK: []byte("newKEK"), Version: 2}, kek)
@@ -222,7 +222,7 @@ func TestKeyReadWriterViewAndUpdateHeaders(t *testing.T) {
 	require.NoError(t, ioutil.WriteFile(path.Node.Key, key, 0600))
 
 	// if the update headers callback function fails, updating headers fails
-	k := ca.NewKeyReadWriter(path.Node, nil, nil)
+	k := ca.NewKeyReadWriter(path.Node, nil, nil, nil)
 	err = k.ViewAndUpdateHeaders(func(h ca.PEMKeyHeaders) (ca.PEMKeyHeaders, error) {
 		require.Nil(t, h)
 		return nil, fmt.Errorf("nope")
@@ -243,12 +243,12 @@ func TestKeyReadWriterViewAndUpdateHeaders(t *testing.T) {
 		require.Equal(t, map[string]string{"updated": "headers"}, h)
 		require.Equal(t, ca.KEKData{}, k)
 		return testHeaders{}, nil
-	}})
+	}}, nil)
 	_, _, err = k.Read()
 	require.NoError(t, err)
 
 	// we can also update headers on an encrypted key
-	k = ca.NewKeyReadWriter(path.Node, []byte("kek"), nil)
+	k = ca.NewKeyReadWriter(path.Node, []byte("kek"), nil, nil)
 	require.NoError(t, k.Write(cert, key, nil))
 
 	err = k.ViewAndUpdateHeaders(func(h ca.PEMKeyHeaders) (ca.PEMKeyHeaders, error) {
@@ -264,7 +264,7 @@ func TestKeyReadWriterViewAndUpdateHeaders(t *testing.T) {
 		require.Equal(t, map[string]string{"updated": "headers"}, h)
 		require.Equal(t, ca.KEKData{KEK: []byte("kek")}, k)
 		return testHeaders{}, nil
-	}})
+	}}, nil)
 	_, _, err = k.Read()
 	require.NoError(t, err)
 }
@@ -284,10 +284,10 @@ func TestKeyReadWriterViewAndRotateKEK(t *testing.T) {
 	require.NotNil(t, keyBlock)
 	keyBlock.Headers = map[string]string{"hello": "world"}
 	key = pem.EncodeToMemory(keyBlock)
-	require.NoError(t, ca.NewKeyReadWriter(path.Node, nil, nil).Write(cert, key, nil))
+	require.NoError(t, ca.NewKeyReadWriter(path.Node, nil, nil, nil).Write(cert, key, nil))
 
 	// if if getting new kek and headers fail, rotating a KEK fails, and the kek does not rotate
-	k := ca.NewKeyReadWriter(path.Node, nil, nil)
+	k := ca.NewKeyReadWriter(path.Node, nil, nil, nil)
 	require.Error(t, k.ViewAndRotateKEK(func(k ca.KEKData, h ca.PEMKeyHeaders) (ca.KEKData, ca.PEMKeyHeaders, error) {
 		require.Equal(t, ca.KEKData{}, k)
 		require.Nil(t, h)
@@ -295,7 +295,7 @@ func TestKeyReadWriterViewAndRotateKEK(t *testing.T) {
 	}))
 
 	// writing new headers will write a key that has the headers returned by the header update function
-	k = ca.NewKeyReadWriter(path.Node, []byte("oldKEK"), nil)
+	k = ca.NewKeyReadWriter(path.Node, []byte("oldKEK"), nil, nil)
 	require.NoError(t, k.ViewAndRotateKEK(func(k ca.KEKData, h ca.PEMKeyHeaders) (ca.KEKData, ca.PEMKeyHeaders, error) {
 		require.Equal(t, ca.KEKData{KEK: []byte("oldKEK")}, k)
 		require.Nil(t, h)
@@ -307,7 +307,7 @@ func TestKeyReadWriterViewAndRotateKEK(t *testing.T) {
 	}))
 
 	// ensure the key has been re-encrypted and we can read it
-	k = ca.NewKeyReadWriter(path.Node, nil, nil)
+	k = ca.NewKeyReadWriter(path.Node, nil, nil, nil)
 	_, _, err = k.Read()
 	require.Error(t, err)
 
@@ -316,7 +316,7 @@ func TestKeyReadWriterViewAndRotateKEK(t *testing.T) {
 	k = ca.NewKeyReadWriter(path.Node, []byte("newKEK"), testHeaders{setHeaders: func(h map[string]string, _ ca.KEKData) (ca.PEMKeyHeaders, error) {
 		headers = h
 		return testHeaders{}, nil
-	}})
+	}}, nil)
 	_, _, err = k.Read()
 	require.NoError(t, err)
 	require.Equal(t, map[string]string{"updated": "headers"}, headers)
@@ -337,7 +337,7 @@ func TestTwoPhaseReadWrite(t *testing.T) {
 	defer os.RemoveAll(tempdir)
 
 	path := ca.NewConfigPaths(filepath.Join(tempdir))
-	krw := ca.NewKeyReadWriter(path.Node, nil, nil)
+	krw := ca.NewKeyReadWriter(path.Node, nil, nil, nil)
 
 	// put a directory in the location where the cert goes, so we can't actually move
 	// the cert from the temporary location to the final location.
@@ -397,7 +397,7 @@ func TestKeyReadWriterMigrate(t *testing.T) {
 	require.NoError(t, ioutil.WriteFile(path.Node.Cert, cert, 0644))
 	require.NoError(t, ioutil.WriteFile(tempKeyPath, key, 0600))
 
-	krw := ca.NewKeyReadWriter(path.Node, nil, nil)
+	krw := ca.NewKeyReadWriter(path.Node, nil, nil, nil)
 	require.NoError(t, krw.Migrate())
 	_, err = os.Stat(tempKeyPath)
 	require.True(t, os.IsNotExist(err)) // it's been moved to the right place
@@ -436,7 +436,7 @@ func testKeyReadWriterDowngradeKeyCase(t *testing.T, tc downgradeTestCase) error
 		require.NotNil(t, block)
 
 		kek = []byte("kek")
-		block, err = keyutils.EncryptPEMBlock(block.Bytes, kek)
+		block, err = keyutils.Default.EncryptPEMBlock(block.Bytes, kek)
 		require.NoError(t, err)
 
 		key = pem.EncodeToMemory(block)
@@ -459,7 +459,7 @@ func testKeyReadWriterDowngradeKeyCase(t *testing.T, tc downgradeTestCase) error
 	require.NoError(t, ioutil.WriteFile(path.Node.Key, key, 0600))
 
 	// if the update headers callback function fails, updating headers fails
-	k := ca.NewKeyReadWriter(path.Node, kek, nil)
+	k := ca.NewKeyReadWriter(path.Node, kek, nil, nil)
 	if err := k.DowngradeKey(); err != nil {
 		return err
 	}
@@ -473,7 +473,7 @@ func testKeyReadWriterDowngradeKeyCase(t *testing.T, tc downgradeTestCase) error
 	require.False(t, keyutils.IsPKCS8(keyBlock.Bytes))
 
 	if tc.encrypted {
-		require.True(t, keyutils.IsEncryptedPEMBlock(keyBlock))
+		require.True(t, keyutils.Default.IsEncryptedPEMBlock(keyBlock))
 	}
 	require.Equal(t, "5", keyBlock.Headers["kek-version"])
 
