@@ -16,14 +16,22 @@ import (
 	agentutils "github.com/docker/swarmkit/agent/testutils"
 	"github.com/docker/swarmkit/api"
 	"github.com/docker/swarmkit/ca"
+	"github.com/docker/swarmkit/ca/keyutils"
 	cautils "github.com/docker/swarmkit/ca/testutils"
 	"github.com/docker/swarmkit/identity"
+	"github.com/docker/swarmkit/log"
+	"github.com/docker/swarmkit/manager"
+	"github.com/docker/swarmkit/manager/state/raft"
 	"github.com/docker/swarmkit/manager/state/store"
 	"github.com/docker/swarmkit/testutils"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/net/context"
 )
+
+func getLoggingContext(t *testing.T) context.Context {
+	return log.WithLogger(context.Background(), log.L.WithField("test", t.Name()))
+}
 
 // If there is nothing on disk and no join addr, we create a new CA and a new set of TLS certs.
 // If AutoLockManagers is enabled, the TLS key is encrypted with a randomly generated lock key.
@@ -487,4 +495,79 @@ func TestManagerFailedStartup(t *testing.T) {
 	case <-node.closed:
 		require.EqualError(t, node.err, "manager stopped: can't initialize raft node: attempted to join raft cluster without knowing own address")
 	}
+}
+
+func TestFIPSConfiguration(t *testing.T) {
+	ctx := getLoggingContext(t)
+	tmpDir, err := ioutil.TempDir("", "fips")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	paths := ca.NewConfigPaths(filepath.Join(tmpDir, "certificates"))
+
+	// don't bother with a listening socket
+	cAddr := filepath.Join(tmpDir, "control.sock")
+	cfg := &Config{
+		ListenControlAPI: cAddr,
+		StateDir:         tmpDir,
+		Executor:         &agentutils.TestExecutor{},
+		FIPS:             true,
+	}
+	node, err := New(cfg)
+	require.NoError(t, err)
+	require.NoError(t, node.Start(ctx))
+
+	select {
+	case <-node.Ready():
+	case <-time.After(5 * time.Second):
+		require.FailNow(t, "node did not ready in time")
+	}
+
+	nodeKey, err := ioutil.ReadFile(paths.Node.Key)
+	require.NoError(t, err)
+	pemBlock, _ := pem.Decode(nodeKey)
+	require.NotNil(t, pemBlock)
+	require.True(t, keyutils.IsPKCS8(pemBlock.Bytes))
+
+	nodeID := node.NodeID()
+
+	require.NoError(t, node.Stop(ctx))
+
+	// we can't access the store because we can't access the manager's raft node, so just start
+	// a raft node and load up the raft data.
+	krw := ca.NewKeyReadWriter(paths.Node, nil, manager.RaftDEKData{}, keyutils.FIPS)
+	_, _, err = krw.Read()
+	require.NoError(t, err)
+
+	dekRotator, err := manager.NewRaftDEKManager(krw)
+	require.NoError(t, err)
+	raftNode := raft.NewNode(raft.NodeOptions{
+		ID:         nodeID,
+		Config:     raft.DefaultNodeConfig(),
+		StateDir:   filepath.Join(tmpDir, "raft"),
+		KeyRotator: dekRotator,
+	})
+	require.NoError(t, raftNode.JoinAndStart(ctx))
+	ctx, cancel := context.WithCancel(ctx)
+	go raftNode.Run(ctx)
+	defer cancel()
+
+	var rootCA api.RootCA
+	require.NoError(t, testutils.PollFuncWithTimeout(nil, func() error {
+		return raftNode.MemoryStore().Update(func(tx store.Tx) error {
+			clusters, err := store.FindClusters(tx, store.All)
+			if err != nil {
+				return err
+			}
+			if len(clusters) == 0 {
+				return errors.New("no cluster")
+			}
+			rootCA = clusters[0].RootCA
+			return nil
+		})
+	}, time.Second*2))
+
+	pemBlock, _ = pem.Decode(rootCA.CAKey)
+	require.NotNil(t, pemBlock)
+	require.True(t, keyutils.IsPKCS8(pemBlock.Bytes))
 }

@@ -14,6 +14,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/docker/swarmkit/ca/keyutils"
+
 	"github.com/boltdb/bolt"
 	"github.com/docker/docker/pkg/plugingetter"
 	metrics "github.com/docker/go-metrics"
@@ -123,6 +125,9 @@ type Config struct {
 
 	// PluginGetter provides access to docker's plugin inventory.
 	PluginGetter plugingetter.PluginGetter
+
+	// FIPS is a boolean stating whether the node is FIPS enabled
+	FIPS bool
 }
 
 // Node implements the primary node functionality for a member of a swarm
@@ -753,7 +758,12 @@ func (n *Node) loadSecurityConfig(ctx context.Context, paths *ca.SecurityConfigP
 		cancel         func() error
 	)
 
-	krw := ca.NewKeyReadWriter(paths.Node, n.unlockKey, &manager.RaftDEKData{}, nil)
+	// if FIPS is required, we want to make sure our key is stored in PKCS8 format
+	formatter := keyutils.Default
+	if n.config.FIPS {
+		formatter = keyutils.FIPS
+	}
+	krw := ca.NewKeyReadWriter(paths.Node, n.unlockKey, &manager.RaftDEKData{}, formatter)
 	if err := krw.Migrate(); err != nil {
 		return nil, nil, err
 	}
@@ -787,6 +797,13 @@ func (n *Node) loadSecurityConfig(ctx context.Context, paths *ca.SecurityConfigP
 			rootCA, err = ca.CreateRootCA(ca.DefaultRootCN)
 			if err != nil {
 				return nil, nil, err
+			}
+			// If we require fips, convert the root CA key to PKCS8 before the raft cluster is created,
+			// so that it will be stored in PKCS8 format.
+			if n.config.FIPS {
+				if err := ca.ConvertRootCAToPKCS8(rootCA); err != nil {
+					return nil, nil, err
+				}
 			}
 			if err := ca.SaveRootCA(rootCA, paths.RootCA); err != nil {
 				return nil, nil, err
