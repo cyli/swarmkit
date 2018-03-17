@@ -14,6 +14,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/docker/swarmkit/identity"
+
 	"github.com/docker/swarmkit/ca/keyutils"
 
 	"github.com/boltdb/bolt"
@@ -54,6 +56,9 @@ var (
 
 	// ErrInvalidUnlockKey is returned when we can't decrypt the TLS certificate
 	ErrInvalidUnlockKey = errors.New("node is locked, and needs a valid unlock key")
+
+	// ErrMandatoryFIPS is returned when the cluster we are joining mandates FIPS, but we are running in non-FIPS mode
+	ErrMandatoryFIPS = errors.New("node is not FIPS-enabled but cluster requires FIPS")
 )
 
 func init() {
@@ -300,6 +305,9 @@ func (n *Node) run(ctx context.Context) (err error) {
 		return err
 	}
 	defer secConfigCancel()
+	if isMandatoryFIPSCluster(securityConfig.ClientTLSCreds.Organization()) && !n.config.FIPS {
+		return ErrMandatoryFIPS
+	}
 
 	// Now that we have the security config, we can get a TLSRenewer, which is
 	// a live component handling certificate rotation.
@@ -752,6 +760,14 @@ func (n *Node) Remotes() []api.Peer {
 	return remotes
 }
 
+func isMandatoryFIPSCluster(orgName string) bool {
+	return strings.HasPrefix(orgName, "FIPS.")
+}
+
+func generateFIPSClusterID() string {
+	return "FIPS." + identity.NewID()
+}
+
 func (n *Node) loadSecurityConfig(ctx context.Context, paths *ca.SecurityConfigPaths) (*ca.SecurityConfig, func() error, error) {
 	var (
 		securityConfig *ca.SecurityConfig
@@ -834,11 +850,16 @@ func (n *Node) loadSecurityConfig(ctx context.Context, paths *ca.SecurityConfigP
 			}
 			log.G(ctx).WithError(err).Debugf("no node credentials found in: %s", krw.Target())
 
-			securityConfig, cancel, err = rootCA.CreateSecurityConfig(ctx, krw, ca.CertificateRequestConfig{
+			requestConfig := ca.CertificateRequestConfig{
 				Token:        n.config.JoinToken,
 				Availability: n.config.Availability,
 				ConnBroker:   n.connBroker,
-			})
+			}
+			// If this is a new cluster, we want to name the cluster ID FIPS-something
+			if n.config.FIPS {
+				requestConfig.Organization = generateFIPSClusterID()
+			}
+			securityConfig, cancel, err = rootCA.CreateSecurityConfig(ctx, krw, requestConfig)
 
 			if err != nil {
 				return nil, nil, err

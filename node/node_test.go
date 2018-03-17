@@ -8,6 +8,7 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -262,6 +263,50 @@ func TestLoadSecurityConfigDownloadAllCerts(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// If there is nothing on disk and no join addr, and FIPS is enabled, we create a cluster whose
+// ID starts with 'FIPS.'  If there is a join address, the cluster ID is whatever the CA set
+// the cluster ID to, even if we are in FIPS mode.
+func TestLoadSecurityConfigNodeFIPS(t *testing.T) {
+	tempdir, err := ioutil.TempDir("", "test-security-config-fips")
+	require.NoError(t, err)
+	defer os.RemoveAll(tempdir)
+
+	paths := ca.NewConfigPaths(filepath.Join(tempdir, "certificates"))
+
+	tc := cautils.NewTestCA(t)
+	defer tc.Stop()
+
+	config := &Config{
+		StateDir: tempdir,
+		FIPS:     true,
+	}
+
+	node, err := New(config)
+	require.NoError(t, err)
+	securityConfig, cancel, err := node.loadSecurityConfig(tc.Context, paths)
+	require.NoError(t, err)
+	defer cancel()
+	require.NotNil(t, securityConfig)
+	require.True(t, strings.HasPrefix(securityConfig.ClientTLSCreds.Organization(), "FIPS."))
+
+	// clear the certs and try downloading from another server that is not FIPS - even if we are
+	// FIPS, the cert we get download does not indicate a FIPS cluster
+	require.NoError(t, os.RemoveAll(filepath.Join(tempdir, "certificates")))
+
+	peer, err := tc.ConnBroker.Remotes().Select()
+	require.NoError(t, err)
+
+	config.JoinAddr = peer.Addr
+	config.JoinToken = tc.ManagerToken
+	node, err = New(config)
+	require.NoError(t, err)
+	securityConfig, cancel, err = node.loadSecurityConfig(tc.Context, paths)
+	require.NoError(t, err)
+	defer cancel()
+	require.NotNil(t, securityConfig)
+	require.False(t, strings.HasPrefix(securityConfig.ClientTLSCreds.Organization(), "FIPS."))
+}
+
 func TestManagerRespectsDispatcherRootCAUpdate(t *testing.T) {
 	tmpDir, err := ioutil.TempDir("", "manager-root-ca-update")
 	require.NoError(t, err)
@@ -497,6 +542,7 @@ func TestManagerFailedStartup(t *testing.T) {
 	}
 }
 
+// When starting in FIPS mode, the cluster object specifies that FIPS is mandatory, and the TLS keys are in PKCS8 format
 func TestFIPSConfiguration(t *testing.T) {
 	ctx := getLoggingContext(t)
 	tmpDir, err := ioutil.TempDir("", "fips")
@@ -570,4 +616,59 @@ func TestFIPSConfiguration(t *testing.T) {
 	pemBlock, _ = pem.Decode(rootCA.CAKey)
 	require.NotNil(t, pemBlock)
 	require.True(t, keyutils.IsPKCS8(pemBlock.Bytes))
+}
+
+// If the certificate specifies that the cluster requires FIPS mode, the node will
+// shut down rather if it is not running in FIPS mode.
+func TestNodeRespectsMandatoryFIPS(t *testing.T) {
+	ctx := getLoggingContext(t)
+
+	tmpDir, err := ioutil.TempDir("", "mandatory-fips")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	paths := ca.NewConfigPaths(filepath.Join(tmpDir, "certificates"))
+
+	// don't bother with a listening socket
+	cAddr := filepath.Join(tmpDir, "control.sock")
+	cfg := &Config{
+		ListenControlAPI: cAddr,
+		StateDir:         tmpDir,
+		Executor:         &agentutils.TestExecutor{},
+		FIPS:             true,
+	}
+	node, err := New(cfg)
+	require.NoError(t, err)
+
+	_, cancel, err := node.loadSecurityConfig(ctx, paths)
+	require.NoError(t, err)
+	cancel()
+
+	// In FIPS mode, we can start the node.
+	require.NoError(t, node.Start(ctx))
+
+	select {
+	case <-node.Ready():
+	case <-time.After(5 * time.Second):
+		require.FailNow(t, "node did not ready in time")
+	}
+
+	require.NoError(t, node.Stop(ctx))
+
+	// in non-FIPS mode, the node should stop
+	cfg.FIPS = false
+	node, err = New(cfg)
+	require.NoError(t, err)
+
+	require.NoError(t, node.Start(ctx))
+	defer node.Stop(ctx)
+
+	select {
+	case <-node.Ready():
+		require.FailNow(t, "node should not become ready")
+	case <-time.After(5 * time.Second):
+		require.FailNow(t, "node neither became ready nor encountered an error")
+	case <-node.closed:
+		require.EqualError(t, node.err, ErrMandatoryFIPS.Error())
+	}
 }

@@ -98,27 +98,36 @@ func TestCreateSecurityConfigEmptyDir(t *testing.T) {
 	assert.NoError(t, tc.CAServer.Stop())
 
 	// Remove all the contents from the temp dir and try again with a new node
-	os.RemoveAll(tc.TempDir)
-	krw := ca.NewKeyReadWriter(tc.Paths.Node, nil, nil, nil)
-	nodeConfig, cancel, err := tc.RootCA.CreateSecurityConfig(tc.Context, krw,
-		ca.CertificateRequestConfig{
-			Token:      tc.WorkerToken,
-			ConnBroker: tc.ConnBroker,
-		})
-	assert.NoError(t, err)
-	cancel()
-	assert.NotNil(t, nodeConfig)
-	assert.NotNil(t, nodeConfig.ClientTLSCreds)
-	assert.NotNil(t, nodeConfig.ServerTLSCreds)
-	assert.Equal(t, tc.RootCA, *nodeConfig.RootCA())
+	for _, org := range []string{
+		"",
+		"my_org",
+	} {
+		os.RemoveAll(tc.TempDir)
+		krw := ca.NewKeyReadWriter(tc.Paths.Node, nil, nil, nil)
+		nodeConfig, cancel, err := tc.RootCA.CreateSecurityConfig(tc.Context, krw,
+			ca.CertificateRequestConfig{
+				Token:        tc.WorkerToken,
+				ConnBroker:   tc.ConnBroker,
+				Organization: org,
+			})
+		assert.NoError(t, err)
+		cancel()
+		assert.NotNil(t, nodeConfig)
+		assert.NotNil(t, nodeConfig.ClientTLSCreds)
+		assert.NotNil(t, nodeConfig.ServerTLSCreds)
+		assert.Equal(t, tc.RootCA, *nodeConfig.RootCA())
+		if org != "" {
+			assert.Equal(t, org, nodeConfig.ClientTLSCreds.Organization())
+		}
 
-	root, err := helpers.ParseCertificatePEM(tc.RootCA.Certs)
-	assert.NoError(t, err)
+		root, err := helpers.ParseCertificatePEM(tc.RootCA.Certs)
+		assert.NoError(t, err)
 
-	issuerInfo := nodeConfig.IssuerInfo()
-	assert.NotNil(t, issuerInfo)
-	assert.Equal(t, root.RawSubjectPublicKeyInfo, issuerInfo.PublicKey)
-	assert.Equal(t, root.RawSubject, issuerInfo.Subject)
+		issuerInfo := nodeConfig.IssuerInfo()
+		assert.NotNil(t, issuerInfo)
+		assert.Equal(t, root.RawSubjectPublicKeyInfo, issuerInfo.PublicKey)
+		assert.Equal(t, root.RawSubject, issuerInfo.Subject)
+	}
 }
 
 func TestCreateSecurityConfigNoCerts(t *testing.T) {

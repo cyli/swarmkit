@@ -414,6 +414,9 @@ type CertificateRequestConfig struct {
 	NodeCertificateStatusRequestTimeout time.Duration
 	// RetryInterval specifies how long to delay between retries, if non-zero.
 	RetryInterval time.Duration
+	// Organization is the the organization to use when creating a security config
+	// from scratch.  If not provided, a random ID is generated.
+	Organization string
 }
 
 // CreateSecurityConfig creates a new key and cert for this node, either locally
@@ -423,7 +426,10 @@ func (rootCA RootCA) CreateSecurityConfig(ctx context.Context, krw *KeyReadWrite
 
 	// Create a new random ID for this certificate
 	cn := identity.NewID()
-	org := identity.NewID()
+	org := config.Organization
+	if config.Organization == "" {
+		org = identity.NewID()
+	}
 
 	proposedRole := ManagerRole
 	tlsKeyPair, issuerInfo, err := rootCA.IssueAndSaveNewCertificates(krw, cn, proposedRole, org)
