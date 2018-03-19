@@ -52,6 +52,8 @@ func (m MultiDecrypter) Decrypt(r api.MaybeEncryptedRecord) (result []byte, err 
 type EncryptedRaftLogger struct {
 	StateDir      string
 	EncryptionKey []byte
+	// FIPS specifies whether FIPS-compliant encryption algorithms should be used
+	FIPS bool
 
 	// mutex is locked for writing only when we need to replace the wal object and snapshotter
 	// object, not when we're writing snapshots or wals (in which case it's locked for reading)

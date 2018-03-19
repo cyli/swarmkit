@@ -192,6 +192,9 @@ type NodeOptions struct {
 	// DisableStackDump prevents Run from dumping goroutine stacks when the
 	// store becomes stuck.
 	DisableStackDump bool
+	// FIPS is a boolean that specifies whether the node should be operating in
+	// FIPS mode, and hence use FIPS-compliant algorithms for raft encryption
+	FIPS bool
 }
 
 func init() {

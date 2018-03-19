@@ -95,8 +95,12 @@ func Encrypt(plaintext []byte, encrypter Encrypter) ([]byte, error) {
 	return data, nil
 }
 
-// Defaults returns a default encrypter and decrypter
-func Defaults(key []byte) (Encrypter, Decrypter) {
+// Defaults returns a default encrypter and decrypter given a key and whether a FIPS-140-2 cipher is required
+func Defaults(key []byte, fips bool) (Encrypter, Decrypter) {
+	if fips {
+		f := NewFernet(key)
+		return f, f
+	}
 	n := NewNACLSecretbox(key)
 	return n, n
 }
