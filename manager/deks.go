@@ -22,6 +22,7 @@ const (
 type RaftDEKData struct {
 	raft.EncryptionKeys
 	NeedsRotation bool
+	FIPS          bool
 }
 
 // UnmarshalHeaders loads the state of the DEK manager given the current TLS headers
@@ -32,13 +33,13 @@ func (r RaftDEKData) UnmarshalHeaders(headers map[string]string, kekData ca.KEKD
 	)
 
 	if currentDEKStr, ok := headers[pemHeaderRaftDEK]; ok {
-		currentDEK, err = decodePEMHeaderValue(currentDEKStr, kekData.KEK)
+		currentDEK, err = decodePEMHeaderValue(currentDEKStr, kekData.KEK, r.FIPS)
 		if err != nil {
 			return nil, err
 		}
 	}
 	if pendingDEKStr, ok := headers[pemHeaderRaftPendingDEK]; ok {
-		pendingDEK, err = decodePEMHeaderValue(pendingDEKStr, kekData.KEK)
+		pendingDEK, err = decodePEMHeaderValue(pendingDEKStr, kekData.KEK, r.FIPS)
 		if err != nil {
 			return nil, err
 		}
@@ -66,7 +67,7 @@ func (r RaftDEKData) MarshalHeaders(kekData ca.KEKData) (map[string]string, erro
 		pemHeaderRaftPendingDEK: r.PendingDEK,
 	} {
 		if contents != nil {
-			dekStr, err := encodePEMHeaderValue(contents, kekData.KEK)
+			dekStr, err := encodePEMHeaderValue(contents, kekData.KEK, r.FIPS)
 			if err != nil {
 				return nil, err
 			}
@@ -122,7 +123,7 @@ var errNotUsingRaftDEKData = fmt.Errorf("RaftDEKManager can no longer store and 
 
 // NewRaftDEKManager returns a RaftDEKManager that uses the current key writer
 // and header manager
-func NewRaftDEKManager(kw ca.KeyWriter) (*RaftDEKManager, error) {
+func NewRaftDEKManager(kw ca.KeyWriter, fips bool) (*RaftDEKManager, error) {
 	// If there is no current DEK, generate one and write it to disk
 	err := kw.ViewAndUpdateHeaders(func(h ca.PEMKeyHeaders) (ca.PEMKeyHeaders, error) {
 		dekData, ok := h.(RaftDEKData)
@@ -141,6 +142,7 @@ func NewRaftDEKManager(kw ca.KeyWriter) (*RaftDEKManager, error) {
 	}
 	return &RaftDEKManager{
 		kw:         kw,
+		FIPS:       fips,
 		rotationCh: make(chan struct{}, 1),
 	}, nil
 }
@@ -240,10 +242,10 @@ func (r *RaftDEKManager) MaybeUpdateKEK(candidateKEK ca.KEKData) (bool, bool, er
 	return updated, unlockedToLocked, err
 }
 
-func decodePEMHeaderValue(headerValue string, kek []byte) ([]byte, error) {
+func decodePEMHeaderValue(headerValue string, kek []byte, fips bool) ([]byte, error) {
 	var decrypter encryption.Decrypter = encryption.NoopCrypter
 	if kek != nil {
-		_, decrypter = encryption.Defaults(kek)
+		_, decrypter = encryption.Defaults(kek, fips)
 	}
 	valueBytes, err := base64.StdEncoding.DecodeString(headerValue)
 	if err != nil {
@@ -256,10 +258,10 @@ func decodePEMHeaderValue(headerValue string, kek []byte) ([]byte, error) {
 	return result, nil
 }
 
-func encodePEMHeaderValue(headerValue []byte, kek []byte) (string, error) {
+func encodePEMHeaderValue(headerValue []byte, kek []byte, fips bool) (string, error) {
 	var encrypter encryption.Encrypter = encryption.NoopCrypter
 	if kek != nil {
-		encrypter, _ = encryption.Defaults(kek)
+		encrypter, _ = encryption.Defaults(kek, fips)
 	}
 	encrypted, err := encryption.Encrypt(headerValue, encrypter)
 	if err != nil {

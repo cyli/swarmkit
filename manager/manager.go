@@ -121,6 +121,9 @@ type Config struct {
 
 	// PluginGetter provides access to docker's plugin inventory.
 	PluginGetter plugingetter.PluginGetter
+
+	// FIPS specifies whether the manager should run in FIPS-compliant mode.
+	FIPS bool
 }
 
 // Manager is the cluster manager for Swarm.

@@ -14,6 +14,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/docker/swarmkit/ca/keyutils"
+
 	"github.com/boltdb/bolt"
 	"github.com/docker/docker/pkg/plugingetter"
 	metrics "github.com/docker/go-metrics"
@@ -123,6 +125,9 @@ type Config struct {
 
 	// PluginGetter provides access to docker's plugin inventory.
 	PluginGetter plugingetter.PluginGetter
+
+	// FIPS is a boolean stating whether the node is FIPS enabled
+	FIPS bool
 }
 
 // Node implements the primary node functionality for a member of a swarm
@@ -753,7 +758,16 @@ func (n *Node) loadSecurityConfig(ctx context.Context, paths *ca.SecurityConfigP
 		cancel         func() error
 	)
 
+<<<<<<< Updated upstream
 	krw := ca.NewKeyReadWriter(paths.Node, n.unlockKey, &manager.RaftDEKData{})
+=======
+	// if FIPS is required, we want to make sure our key is stored in PKCS8 format
+	formatter := keyutils.Default
+	if n.config.FIPS {
+		formatter = keyutils.FIPS
+	}
+	krw := ca.NewKeyReadWriter(paths.Node, n.unlockKey, &manager.RaftDEKData{}, formatter)
+>>>>>>> Stashed changes
 	if err := krw.Migrate(); err != nil {
 		return nil, nil, err
 	}
@@ -944,6 +958,7 @@ func (n *Node) runManager(ctx context.Context, securityConfig *ca.SecurityConfig
 		Availability:     n.config.Availability,
 		PluginGetter:     n.config.PluginGetter,
 		RootCAPaths:      rootPaths,
+		FIPS:             n.config.FIPS,
 	})
 	if err != nil {
 		return false, err

@@ -3,6 +3,7 @@ package manager
 import (
 	"encoding/base64"
 	"encoding/pem"
+	"fmt"
 	"io/ioutil"
 	"os"
 	"testing"
@@ -460,4 +461,34 @@ O0T3aXuZGYNyh//KqAoA3erCmh6HauMz84Y=
 	krw = ca.NewKeyReadWriter(path.Node, realKEK, RaftDEKData{})
 	_, _, err = krw.Read()
 	require.NoError(t, err)
+}
+
+// If FIPS is enabled, the raft DEK will be encrypted using fernet, and not NACL secretbox.
+func TestRaftDEKsFIPSEnabledUsesFernet(t *testing.T) {
+	tempDir, err := ioutil.TempDir("", "manager-dek-fips")
+	require.NoError(t, err)
+	defer os.RemoveAll(tempDir)
+
+	paths := ca.NewConfigPaths(tempDir)
+	cert, key, err := cautils.CreateRootCertAndKey("cn")
+	require.NoError(t, err)
+
+	// no particular reason not to use FIPS in the key writer to write the TLS key itself,
+	// except to demonstrate that these two functionalities are decoupled
+	keys := raft.EncryptionKeys{CurrentDEK: []byte("current dek")}
+	krw := ca.NewKeyReadWriter(paths.Node, nil, RaftDEKData{EncryptionKeys: keys, FIPS: true}, nil)
+	require.NoError(t, krw.Write(cert, key, nil))
+
+	dekManager, err := NewRaftDEKManager(krw, true) // this should be able to read the dek data
+	require.NoError(t, err)
+
+	// if we do not use FIPS to write the header in the first place, a FIPS DEK manager can't read it
+	// because it's NACL secretbox
+	keys := raft.EncryptionKeys{CurrentDEK: []byte("current dek")}
+	krw := ca.NewKeyReadWriter(paths.Node, nil, RaftDEKData{EncryptionKeys: keys}, nil)
+	require.NoError(t, krw.Write(cert, key, nil))
+
+	_, err = NewRaftDEKManager(krw, true) // this should be able to read the dek data
+	require.Error(t, err)
+	fmt.Println(err)
 }
