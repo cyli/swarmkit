@@ -794,6 +794,7 @@ func GetRemoteSignedCertificate(ctx context.Context, csr []byte, rootCAPool *x50
 	if rootCAPool == nil {
 		return nil, errors.New("valid root CA pool required")
 	}
+	fmt.Println(config)
 	creds := config.Credentials
 
 	if creds == nil {
